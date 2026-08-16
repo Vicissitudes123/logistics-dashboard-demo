@@ -1,0 +1,25 @@
+name: Temporary Whisper Model Fetch
+
+on:
+  push:
+    branches:
+      - tmp-whisper-model-20260816
+  workflow_dispatch:
+
+jobs:
+  fetch-model:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download multilingual Whisper tiny model
+        run: |
+          curl -L --fail --retry 5 --retry-delay 5 \
+            -o ggml-tiny.bin \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+          sha256sum ggml-tiny.bin
+          ls -lh ggml-tiny.bin
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ggml-tiny-multilingual
+          path: ggml-tiny.bin
+          retention-days: 1
