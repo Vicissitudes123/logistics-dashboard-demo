@@ -1,0 +1,24 @@
+name: temp-asr-model
+on:
+  push:
+    branches:
+      - temp-asr-model-20260824
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download whisper model
+        run: |
+          mkdir -p out
+          python - <<'PY'
+          import urllib.request
+          url='https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin?download=true'
+          urllib.request.urlretrieve(url,'out/ggml-small-q5_1.bin')
+          PY
+          sha256sum out/ggml-small-q5_1.bin
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-small-q5_1
+          path: out/ggml-small-q5_1.bin
+          retention-days: 1
