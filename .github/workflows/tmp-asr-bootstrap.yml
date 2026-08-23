@@ -4,10 +4,6 @@ on:
   push:
     paths:
       - '.github/workflows/tmp-asr-bootstrap.yml'
-      - '.tmp-asr-trigger'
-  pull_request:
-    paths:
-      - '.tmp-asr-trigger'
   workflow_dispatch:
 
 jobs:
@@ -17,15 +13,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build whisper.cpp
+      - name: Build whisper.cpp static CLI
         shell: bash
         run: |
           set -euxo pipefail
           git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp
           cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
+            -DBUILD_SHARED_LIBS=OFF \
             -DWHISPER_BUILD_TESTS=OFF \
             -DWHISPER_BUILD_EXAMPLES=ON \
-            -DWHISPER_BUILD_SERVER=OFF
+            -DWHISPER_BUILD_SERVER=OFF \
+            -DGGML_NATIVE=OFF
           cmake --build /tmp/whisper.cpp/build --config Release -j2
           mkdir -p asr_bundle
           cp /tmp/whisper.cpp/build/bin/whisper-cli asr_bundle/whisper-cli
@@ -38,7 +36,7 @@ jobs:
           curl -L --fail --retry 3 \
             -o asr_bundle/ggml-tiny-q5_1.bin \
             https://raw.githubusercontent.com/TranscribeJs/transcribe.js/main/examples/models/ggml-tiny-q5_1.bin
-          echo '818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7  asr_bundle/ggml-tiny-q5_1.bin' | sha256sum -c -
+          sha256sum asr_bundle/ggml-tiny-q5_1.bin | tee asr_bundle/SHA256SUMS.txt
 
       - name: Upload local ASR bundle
         uses: actions/upload-artifact@v4
