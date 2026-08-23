@@ -1,0 +1,37 @@
+name: Temporary Local ASR Bundle 20260824
+
+on:
+  push:
+    branches:
+      - tmp-asr-local-20260824
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build whisper.cpp
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp
+          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_SERVER=OFF
+          cmake --build /tmp/whisper.cpp/build --config Release -j2
+          mkdir -p bundle
+          cp /tmp/whisper.cpp/build/bin/whisper-cli bundle/whisper-cli
+          chmod +x bundle/whisper-cli
+      - name: Download multilingual Whisper small q5 model
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 5 --retry-delay 10 --retry-all-errors \
+            -o bundle/ggml-small-q5_1.bin \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin
+          ls -lh bundle/ggml-small-q5_1.bin
+          sha256sum bundle/ggml-small-q5_1.bin
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-asr-small-q5
+          path: bundle/
+          retention-days: 1
