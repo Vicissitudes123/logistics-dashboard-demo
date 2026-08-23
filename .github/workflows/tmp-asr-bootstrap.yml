@@ -4,6 +4,9 @@ on:
   push:
     paths:
       - '.github/workflows/tmp-asr-bootstrap.yml'
+  pull_request:
+    paths:
+      - '.tmp-asr-trigger'
   workflow_dispatch:
 
 jobs:
