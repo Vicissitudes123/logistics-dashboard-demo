@@ -19,15 +19,23 @@ jobs:
         with:
           ref: tmp-asr-local-20260824
 
-      - name: Build whisper.cpp
+      - name: Build whisper.cpp with runtime libraries
         run: |
           set -euo pipefail
           git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp
-          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_BUILD_SERVER=OFF
+          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
+            -DWHISPER_BUILD_TESTS=OFF \
+            -DWHISPER_BUILD_EXAMPLES=ON \
+            -DWHISPER_BUILD_SERVER=OFF
           cmake --build /tmp/whisper.cpp/build --config Release -j2
           mkdir -p bundle
           cp /tmp/whisper.cpp/build/bin/whisper-cli bundle/whisper-cli
           chmod +x bundle/whisper-cli
+          find /tmp/whisper.cpp/build \( -type f -o -type l \) -name '*.so*' -exec cp -a {} bundle/ \;
+          echo 'Bundled runtime:'
+          ls -lh bundle
+          echo 'Dynamic dependencies:'
+          LD_LIBRARY_PATH="$PWD/bundle" ldd bundle/whisper-cli || true
 
       - name: Download multilingual Whisper small q5 model
         run: |
@@ -42,7 +50,7 @@ jobs:
         id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: local-asr-small-q5
+          name: local-asr-small-q5-runtime
           path: bundle/
           retention-days: 1
 
@@ -55,5 +63,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add .tmp-asr-run.json
-          git commit -m 'chore: publish temporary ASR artifact id'
+          git commit -m 'chore: publish temporary ASR runtime artifact id'
           git push origin HEAD:tmp-asr-local-20260824
