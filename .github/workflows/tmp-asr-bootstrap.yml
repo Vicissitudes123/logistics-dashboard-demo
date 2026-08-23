@@ -1,0 +1,49 @@
+name: Temporary ASR Bootstrap
+
+on:
+  push:
+    paths:
+      - '.github/workflows/tmp-asr-bootstrap.yml'
+      - '.tmp-asr-trigger'
+  pull_request:
+    paths:
+      - '.tmp-asr-trigger'
+  workflow_dispatch:
+
+jobs:
+  build-asr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build whisper.cpp
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git /tmp/whisper.cpp
+          cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build \
+            -DWHISPER_BUILD_TESTS=OFF \
+            -DWHISPER_BUILD_EXAMPLES=ON \
+            -DWHISPER_BUILD_SERVER=OFF
+          cmake --build /tmp/whisper.cpp/build --config Release -j2
+          mkdir -p asr_bundle
+          cp /tmp/whisper.cpp/build/bin/whisper-cli asr_bundle/whisper-cli
+          chmod +x asr_bundle/whisper-cli
+
+      - name: Download multilingual tiny model
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 \
+            -o asr_bundle/ggml-tiny-q5_1.bin \
+            https://raw.githubusercontent.com/TranscribeJs/transcribe.js/main/examples/models/ggml-tiny-q5_1.bin
+          echo '818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7  asr_bundle/ggml-tiny-q5_1.bin' | sha256sum -c -
+
+      - name: Upload local ASR bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-asr-bundle
+          path: asr_bundle/
+          if-no-files-found: error
+          retention-days: 1
