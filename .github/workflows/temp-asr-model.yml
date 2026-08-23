@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - temp-asr-model-20260824
+  pull_request:
+    branches:
+      - main
 jobs:
   model:
     runs-on: ubuntu-latest
