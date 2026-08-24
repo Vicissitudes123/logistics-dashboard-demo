@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: audio-transcription-mcp
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: APP_TOKEN
+        sync: false
+      - key: MAX_UPLOAD_MB
+        value: "200"
+      - key: CHUNK_SECONDS
+        value: "900"
