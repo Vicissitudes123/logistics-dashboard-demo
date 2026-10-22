@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - anime-shelf-apk
+    paths-ignore:
+      - 'downloads/**'
+      - '.github/workflows/deliver-apk.yml'
 
 permissions:
   contents: read
