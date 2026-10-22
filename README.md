@@ -2,7 +2,7 @@
 
 原生安卓测试版，Android 8.0（API 26）及以上。中文界面，视频、账号会话和观看记录保存在设备本地，不需要部署服务器。
 
-**当前交付为未经 Android 编译与设备验证的源码初稿，尚未生成 APK。** 具体状态见 `BUILD_STATUS.md`；以下使用步骤描述的是该实现的预期流程。
+**已生成可安装的安卓测试 APK。** 已通过 60 项解析回归断言、Android 编译、Lint 和 APK 签名验证；尚未进行实体手机或用户账号下的番剧下载测试。具体状态见 `BUILD_STATUS.md`。
 
 ## 使用
 
@@ -36,7 +36,7 @@
 
 设置 `ANDROID_HOME` 或在本机 `local.properties` 中配置 `sdk.dir`。不要提交本地 SDK 路径、会话文件或签名密钥。输出为 `app/build/outputs/apk/debug/app-debug.apk`。这是开发签名的测试包；正式分发时应配置自己的发布签名，并持续保存密钥以便以后更新。
 
-源码包没有二进制 wrapper JAR，需先安装 Gradle 8.9。也附有手动触发的 GitHub Actions 构建流程，运行成功后输出 APK artifact；本次尚未执行。
+源码包没有二进制 wrapper JAR，需先安装 Gradle 8.9。附有 GitHub Actions 构建流程：向 `anime-shelf-apk` 分支提交或手动触发后构建并输出 APK artifact。CI 在工作区生成并缓存测试签名密钥；后续构建应继续使用同一缓存密钥，以便覆盖安装更新。
 
 `tests/ParserSelfTest.java` 是离线解析回归测试，使用合成的接口响应检查真实清晰度、音视频配对、权限错误和 JSON 序列化，不访问用户账号。编译与静态检查不替代安卓手机上的播放/后台下载测试。
 

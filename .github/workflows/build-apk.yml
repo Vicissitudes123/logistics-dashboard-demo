@@ -13,6 +13,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      ANIME_DEBUG_KEYSTORE: ${{ github.workspace }}/.ci-signing/debug.keystore
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -29,8 +31,15 @@ jobs:
       - name: Preserve test APK signing identity
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: anime-shelf-debug-signing-v1
+          path: ${{ env.ANIME_DEBUG_KEYSTORE }}
+          key: anime-shelf-debug-signing-v2
+      - name: Create test signing key when absent
+        shell: bash
+        run: |
+          if [ ! -s "$ANIME_DEBUG_KEYSTORE" ]; then
+            mkdir -p "$(dirname "$ANIME_DEBUG_KEYSTORE")"
+            keytool -genkeypair -keystore "$ANIME_DEBUG_KEYSTORE" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -noprompt
+          fi
       - name: Install Android build tools
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
       - name: Check media parser
