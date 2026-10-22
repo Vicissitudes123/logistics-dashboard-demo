@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">番匣</string>
+    <string name="download_channel">番匣离线下载</string>
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:colorAccent">#AE9BFF</item>
+        <item name="android:windowBackground">#10111B</item>
+        <item name="android:statusBarColor">#10111B</item>
+        <item name="android:navigationBarColor">#10111B</item>
+    </style>
+</resources>
