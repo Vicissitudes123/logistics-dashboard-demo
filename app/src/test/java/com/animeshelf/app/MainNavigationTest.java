@@ -7,9 +7,11 @@ import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.MotionEvent;
 import android.widget.Button;
 import android.widget.TextView;
 import androidx.media3.common.Player;
+import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.cache.SimpleCache;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -17,6 +19,11 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -91,10 +98,12 @@ public class MainNavigationTest {
     @Test public void fullScreenHasHomeAndItRestoresTheCompleteHomeLayout() throws Exception {
         attachPlayback(Player.STATE_READY, 46000, true);
         invoke("setFullScreen", new Class<?>[]{boolean.class}, true);
-        assertTrue(findButton("首页").isShown());
-        assertEquals(View.VISIBLE, ((View) get("header")).getVisibility());
+        View home = findDescription(activity.getWindow().getDecorView(), "回到首页");
+        assertNotNull(home);
+        assertTrue(home.isShown());
+        assertEquals(View.GONE, ((View) get("header")).getVisibility());
 
-        click("首页");
+        assertTrue(home.performClick());
 
         assertHome();
         assertFalse((Boolean) get("fullScreen"));
@@ -103,6 +112,24 @@ public class MainNavigationTest {
         assertEquals(View.VISIBLE, ((View) get("loginButton")).getVisibility());
         assertEquals(46000, store.getProgress(episode.id).positionMs);
         assertTrue(playback.released);
+    }
+
+    @Test public void landscapeFullscreenGivesTheEntireAvailableAreaToVideo() throws Exception {
+        attachPlayback(Player.STATE_READY, 46000, true);
+        invoke("setFullScreen", new Class<?>[]{boolean.class}, true);
+        View root = (View) get("root");
+        float density = activity.getResources().getDisplayMetrics().density;
+        int width = Math.round(640 * density), height = Math.round(360 * density);
+        root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, width, height);
+
+        assertEquals(View.GONE, ((View) get("header")).getVisibility());
+        assertEquals(View.GONE, ((View) get("nav")).getVisibility());
+        assertEquals(View.GONE, ((View) get("body")).getVisibility());
+        View frame = (View) get("videoFrame");
+        assertEquals(width - root.getPaddingLeft() - root.getPaddingRight(), frame.getWidth());
+        assertEquals(height - root.getPaddingTop() - root.getPaddingBottom(), frame.getHeight());
     }
 
     @Test public void systemBackLeavesFullscreenThenReturnsHomeThenExits() throws Exception {
@@ -187,6 +214,81 @@ public class MainNavigationTest {
         assertTrue(findButton("首页").isShown());
     }
 
+    @Test public void returningHomeDiscardsALatePlaybackSelectionResult() throws Exception {
+        attachPlayback(Player.STATE_READY, 52000, true);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch complete = new CountDownLatch(1);
+        AtomicBoolean selectionApplied = new AtomicBoolean();
+        Class<?> receiverType = Class.forName("com.animeshelf.app.MainActivity$Receiver");
+        Object receiver = Proxy.newProxyInstance(receiverType.getClassLoader(),
+            new Class<?>[]{receiverType}, (proxy, method, arguments) -> {
+                if (method.getName().equals("accept")) selectionApplied.set(true);
+                return null;
+            });
+        Callable<String> pendingSelection = () -> {
+            started.countDown();
+            if (!complete.await(5, TimeUnit.SECONDS)) throw new IOException("selection test timed out");
+            return "ready to open another episode";
+        };
+        invoke("runTask", new Class<?>[]{String.class, int.class, Callable.class, receiverType},
+            "读取下一集…", (Integer) get("selectionToken"), pendingSelection, receiver);
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+
+        click("首页");
+        complete.countDown();
+        // Drain the real worker before the paused UI looper, avoiding timing-based sleeps.
+        ExecutorService worker = (ExecutorService) get("io");
+        worker.shutdown();
+        assertTrue(worker.awaitTermination(5, TimeUnit.SECONDS));
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle();
+
+        assertHome();
+        assertFalse(selectionApplied.get());
+        assertNull(get("player"));
+        assertTrue(playback.released);
+        assertEquals(52000, store.getProgress(episode.id).positionMs);
+        assertEquals(View.GONE, ((View) get("status")).getVisibility());
+    }
+
+    @Test public void endedEpisodeCanReplayFromTheBeginningWithTheVisiblePlayControl() throws Exception {
+        attachPlayback(Player.STATE_ENDED, 300000, true);
+        PlayerOverlay overlay = (PlayerOverlay) get("playerOverlay");
+        overlay.refresh();
+        View replay = findDescription(overlay, "播放");
+        assertNotNull(replay);
+
+        assertTrue(replay.performClick());
+
+        assertEquals(1, playback.seekCalls);
+        assertEquals(0, playback.position);
+        assertEquals(1, playback.playCalls);
+        assertTrue(playback.playWhenReady);
+    }
+
+    @Test public void pausingTheActivityDiscardsAnUnreleasedSeekGesture() throws Exception {
+        attachPlayback(Player.STATE_READY, 76000, true);
+        invoke("setFullScreen", new Class<?>[]{boolean.class}, true);
+        View root = (View) get("root");
+        root.measure(View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 640, 360);
+        PlayerOverlay overlay = (PlayerOverlay) get("playerOverlay");
+        overlay.hideControls();
+        long now = android.os.SystemClock.uptimeMillis();
+        dispatch(overlay, now, MotionEvent.ACTION_DOWN, 160, 160);
+        dispatch(overlay, now, MotionEvent.ACTION_MOVE, 280, 160);
+        assertEquals(0, playback.seekCalls);
+
+        controller.pause();
+        controller.resume();
+        dispatch(overlay, now, MotionEvent.ACTION_UP, 280, 160);
+
+        assertEquals(0, playback.seekCalls);
+        assertEquals(76000, store.getProgress(episode.id).positionMs);
+        assertFalse(playback.playWhenReady);
+        assertFalse(playback.released);
+    }
+
     private void attachPlayback(int state, long position, boolean wasReady) throws Exception {
         playback = new FakePlayback(state, position, 300000);
         set("player", playback.player);
@@ -195,6 +297,7 @@ public class MainNavigationTest {
         set("sourceReady", wasReady);
         set("seriesPage", true);
         ((View) get("playerPanel")).setVisibility(View.VISIBLE);
+        ((PlayerOverlay) get("playerOverlay")).setActive(true);
     }
 
     private void assertHome() throws Exception {
@@ -223,6 +326,22 @@ public class MainNavigationTest {
         }
         return null;
     }
+    private static View findDescription(View root, String description) {
+        if (description.contentEquals(root.getContentDescription() == null ? "" : root.getContentDescription())) return root;
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View found = findDescription(group.getChildAt(i), description);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+    private static void dispatch(View view, long downTime, int action, float x, float y) {
+        MotionEvent event = MotionEvent.obtain(downTime, android.os.SystemClock.uptimeMillis(), action, x, y, 0);
+        view.dispatchTouchEvent(event);
+        event.recycle();
+    }
     private Object get(String name) throws Exception {
         Field field = MainActivity.class.getDeclaredField(name);
         field.setAccessible(true);
@@ -242,14 +361,25 @@ public class MainNavigationTest {
     /** Only playback state is simulated; UI navigation and persisted history are real. */
     private static final class FakePlayback {
         final ExoPlayer player;
-        boolean released;
+        boolean released, playWhenReady = true;
+        long position;
+        int seekCalls, playCalls;
+        float speed = 1f;
         FakePlayback(int state, long position, long duration) {
+            this.position = position;
             player = (ExoPlayer) Proxy.newProxyInstance(ExoPlayer.class.getClassLoader(), new Class<?>[]{ExoPlayer.class}, (proxy, method, args) -> {
                 switch (method.getName()) {
                     case "getPlaybackState": return state;
-                    case "getCurrentPosition": return position;
+                    case "getCurrentPosition": return this.position;
                     case "getDuration": return duration;
                     case "getApplicationLooper": return Looper.getMainLooper();
+                    case "getPlaybackParameters": return new PlaybackParameters(speed);
+                    case "getPlayWhenReady": return playWhenReady;
+                    case "isCurrentMediaItemSeekable": return true;
+                    case "pause": playWhenReady = false; return null;
+                    case "play": playWhenReady = true; playCalls++; return null;
+                    case "seekTo": this.position = ((Number) args[args.length - 1]).longValue(); seekCalls++; return null;
+                    case "setPlaybackSpeed": speed = ((Number) args[0]).floatValue(); return null;
                     case "release": released = true; return null;
                     case "equals": return proxy == args[0];
                     case "hashCode": return System.identityHashCode(proxy);

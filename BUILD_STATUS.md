@@ -1,3 +1,9 @@
+# 0.1.3 构建中
+
+当前源码版本为 **0.1.3 / code 4**。本轮改动为视频内控制栏、触摸手势与真正的沉浸全屏；尚未宣称本轮构建或手机交互验收通过。用户已确认此前 0.1.2 在手机上恢复播放。保留原签名和缓存结构，构建后交付覆盖安装 APK。
+
+---
+
 # 当前交付状态
 
 当前交付为番匣 **0.1.2**，`versionCode=3`，包名 `com.animeshelf.app`，最低 Android 8.0（API 26）。源码提交 `ffc5315f9e5f976ab477d4e9acb6dc3bd1265bab` 已在[构建 39707232387](https://github.com/Vicissitudes123/logistics-dashboard-demo/actions/runs/39707232387)通过全部检查并完成浏览器下载交付。

@@ -14,6 +14,7 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.media.AudioManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -64,12 +65,13 @@ public final class MainActivity extends Activity {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newFixedThreadPool(2);
-    private LinearLayout root, header, body, nav, playerPanel, playerTools, content;
+    private LinearLayout root, header, body, nav, playerPanel, content;
     private FrameLayout videoFrame;
     private ScrollView scroll;
-    private TextView status, nowTitle, nowSubtitle, speedLabel, tagline;
+    private TextView status, tagline;
     private Button loginButton, addButton;
     private PlayerView playerView;
+    private PlayerOverlay playerOverlay;
     private ExoPlayer player;
     private Store store;
     private MediaRepository media;
@@ -92,6 +94,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        setVolumeControlStream(AudioManager.STREAM_MUSIC);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
@@ -116,9 +119,16 @@ public final class MainActivity extends Activity {
                 right = cutout.getSafeInsetRight(); bottom = cutout.getSafeInsetBottom();
             }
             view.setPadding(left, top, right, bottom);
+            if (playerOverlay != null && Build.VERSION.SDK_INT >= 29) {
+                android.graphics.Insets gestures = insets.getSystemGestureInsets();
+                playerOverlay.setSystemGestureInset(gestures.left, gestures.top, gestures.right, gestures.bottom);
+            }
             return insets;
         });
         root.requestApplyInsets();
+        root.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (playerPanel != null && (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop)) resizeVideo();
+        });
         header = column(); header.setPadding(dp(20), dp(18), dp(20), dp(12));
         LinearLayout brand = row();
         brand.addView(button("首页", false, v -> renderLibrary()));
@@ -137,32 +147,42 @@ public final class MainActivity extends Activity {
         root.addView(header);
 
         playerPanel = column(); playerPanel.setVisibility(View.GONE);
-        nowTitle = text("", 16, TEXT); nowTitle.setTypeface(null, Typeface.BOLD);
-        nowTitle.setPadding(dp(16), dp(8), dp(16), dp(3));
-        nowSubtitle = text("", 12, MUTED); nowSubtitle.setPadding(dp(16), 0, dp(16), dp(8));
-        playerPanel.addView(nowTitle); playerPanel.addView(nowSubtitle);
         videoFrame = new FrameLayout(this); videoFrame.setBackgroundColor(Color.BLACK);
         videoFrame.setClipChildren(true);
-        playerView = new PlayerView(this);
-        playerView.setUseController(true);
+        playerView = (PlayerView) getLayoutInflater().inflate(R.layout.player_surface, videoFrame, false);
+        playerView.setUseController(false);
         playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
         playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
         videoFrame.addView(playerView, new FrameLayout.LayoutParams(-1, -1));
+        playerOverlay = new PlayerOverlay(this, new PlayerOverlay.Host() {
+            @Override public boolean hasPlayer() { return player != null; }
+            @Override public boolean isPlaying() {
+                return player != null && player.getPlayWhenReady() && player.getPlaybackState() != Player.STATE_ENDED
+                    && player.getPlaybackState() != Player.STATE_IDLE;
+            }
+            @Override public boolean canSeek() {
+                return player != null && sourceReady && player.getPlaybackState() != Player.STATE_IDLE
+                    && player.getDuration() > 0 && player.isCurrentMediaItemSeekable();
+            }
+            @Override public long positionMs() { return player == null ? 0 : player.getCurrentPosition(); }
+            @Override public long durationMs() { return player == null ? -1 : player.getDuration(); }
+            @Override public float speed() { return player == null ? store.getSpeed() : player.getPlaybackParameters().speed; }
+            @Override public void togglePlayback() { MainActivity.this.togglePlayback(); }
+            @Override public void seekTo(long position) {
+                if (!canSeek()) return;
+                player.seekTo(Math.max(0, Math.min(player.getDuration(), position)));
+                savePosition();
+            }
+            @Override public void setSpeed(float rate) { setPlaybackSpeed(rate); }
+            @Override public void chooseSpeed() { MainActivity.this.chooseSpeed(); }
+            @Override public void chooseEpisode() { chooseEpisodeMenu(); }
+            @Override public void chooseDisplay() { chooseDisplayMenu(); }
+            @Override public void back() { onBackPressed(); }
+            @Override public void home() { renderLibrary(); }
+            @Override public void toggleFullScreen() { setFullScreen(!fullScreen); }
+        });
+        videoFrame.addView(playerOverlay, new FrameLayout.LayoutParams(-1, -1));
         playerPanel.addView(videoFrame, new LinearLayout.LayoutParams(-1, dp(220)));
-        playerTools = column(); playerTools.setPadding(dp(8), dp(4), dp(8), dp(4));
-        LinearLayout firstTools = row();
-        addEqual(firstTools, button("上一集", false, v -> adjacent(-1)));
-        speedLabel = button("1.0×", false, v -> chooseSpeed()); addEqual(firstTools, speedLabel);
-        addEqual(firstTools, button("下一集", false, v -> adjacent(1)));
-        addEqual(firstTools, button("全屏", false, v -> setFullScreen(!fullScreen)));
-        playerTools.addView(firstTools);
-        LinearLayout secondTools = row();
-        addEqual(secondTools, button("缩小 −", false, v -> setZoom(zoom - .25f)));
-        addEqual(secondTools, button("适应", false, v -> { zoom = 1; applyZoom(); playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT); }));
-        addEqual(secondTools, button("铺满", false, v -> { zoom = 1; applyZoom(); playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM); }));
-        addEqual(secondTools, button("放大 ＋", false, v -> setZoom(zoom + .25f)));
-        playerTools.addView(secondTools);
-        playerPanel.addView(playerTools);
         root.addView(playerPanel);
 
         body = column(); root.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -336,7 +356,7 @@ public final class MainActivity extends Activity {
     }
 
     private void play(Models.Episode episode, Models.Quality quality, boolean offline, long resumeOverrideMs) {
-        ++selectionToken; savePosition(); sourceReady = false;
+        ++selectionToken; playerOverlay.setActive(false); savePosition(); sourceReady = false;
         if (player != null) { playerView.setPlayer(null); player.release(); player = null; }
         currentEpisode = episode; currentQuality = quality; currentOffline = offline;
         Store.Progress progress = store.getProgress(episode.id);
@@ -352,7 +372,6 @@ public final class MainActivity extends Activity {
             else next.setMediaSource(media.createMediaSource(episode, quality, offline));
             next.seekTo(requestedResumeMs);
             next.setPlaybackSpeed(store.getSpeed());
-            speedLabel.setText(speedText(next.getPlaybackParameters().speed));
             next.addListener(new Player.Listener() {
                 @Override public void onPlayerError(PlaybackException e) {
                     if (dead || player != next) return;
@@ -363,17 +382,20 @@ public final class MainActivity extends Activity {
                     if (player != next) return;
                     if (playing) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                     else { getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); savePosition(); }
+                    playerOverlay.refresh();
                 }
                 @Override public void onPlaybackStateChanged(int state) {
                     if (player != next) return;
                     if (state == Player.STATE_READY) { sourceReady = true; applyZoom(); savePosition(); }
-                    if (state == Player.STATE_ENDED) { savePosition(); notice("本集已看完，可点击下一集继续"); }
+                    if (state == Player.STATE_ENDED) { savePosition(); playerOverlay.showControls(); notice("本集已看完，可通过选集继续"); }
+                    playerOverlay.refresh();
                 }
             });
             next.prepare(); next.play();
             playerPanel.setVisibility(View.VISIBLE);
-            nowTitle.setText(episode.seriesTitle + " · 第 " + episode.index + " 集");
-            nowSubtitle.setText(episode.title + "  ·  " + (quality == null ? "本地文件" : quality.label + (offline ? " · 离线" : " · 在线")));
+            playerOverlay.setTitle(episode.seriesTitle + " · 第 " + episode.index + " 集",
+                episode.title + "  ·  " + (quality == null ? "本地文件" : quality.label + (offline ? " · 离线" : " · 在线")));
+            playerOverlay.setActive(true);
             resizeVideo();
             downloadsPage = false;
             if (currentSeries != null) renderSeriesContent(currentSeries);
@@ -388,6 +410,7 @@ public final class MainActivity extends Activity {
     private void showPlaybackFailure(Throwable cause) {
         if (dead || isFinishing()) return;
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        playerOverlay.cancelInteraction(); playerOverlay.refresh(); playerOverlay.showControls();
         String diagnostic = MediaErrors.describe(cause);
         Models.Episode failedEpisode = currentEpisode;
         Models.Quality failedQuality = currentQuality;
@@ -442,6 +465,7 @@ public final class MainActivity extends Activity {
         ++selectionToken;
         ++taskStatusToken;
         status.setVisibility(View.GONE);
+        playerOverlay.setActive(false);
         // A failed source can already be IDLE. Preserve its real position if it
         // reached READY; a source that never loaded must not overwrite history.
         if (player != null && currentEpisode != null && sourceReady) {
@@ -461,6 +485,7 @@ public final class MainActivity extends Activity {
         requestedResumeMs = 0;
         if (fullScreen) setFullScreen(false);
         playerPanel.setVisibility(View.GONE);
+        resizeVideo();
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
@@ -475,15 +500,65 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void togglePlayback() {
+        if (player == null) return;
+        if (player.getPlaybackState() == Player.STATE_ENDED) {
+            player.seekTo(0); player.play();
+        } else if (player.getPlayerError() != null) {
+            showPlaybackFailure(player.getPlayerError());
+        } else if (player.getPlayWhenReady()) player.pause();
+        else player.play();
+        playerOverlay.refresh();
+    }
+
+    private void setPlaybackSpeed(float rate) {
+        float speed = Math.max(.25f, Math.min(3f, Math.round(rate * 4f) / 4f));
+        store.setSpeed(speed);
+        if (player != null) player.setPlaybackSpeed(speed);
+        playerOverlay.refresh();
+    }
+
     private void chooseSpeed() {
         if (player == null) return;
-        float[] rates = {.5f, .75f, 1f, 1.25f, 1.5f, 2f, 3f};
+        float[] rates = {.25f, .5f, .75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f};
         String[] names = new String[rates.length];
-        for (int i = 0; i < rates.length; i++) names[i] = speedText(rates[i]);
-        new AlertDialog.Builder(this).setTitle("播放速度").setItems(names, (d, i) -> {
-            store.setSpeed(rates[i]);
-            if (player != null) player.setPlaybackSpeed(rates[i]); speedLabel.setText(names[i]);
-        }).show();
+        int selected = -1;
+        for (int i = 0; i < rates.length; i++) {
+            names[i] = speedText(rates[i]);
+            if (Math.abs(player.getPlaybackParameters().speed - rates[i]) < .01f) selected = i;
+        }
+        new AlertDialog.Builder(this).setTitle("播放速度 · 左侧上下滑动也可调节")
+            .setSingleChoiceItems(names, selected, (dialog, index) -> {
+                setPlaybackSpeed(rates[index]); dialog.dismiss();
+            }).setNegativeButton("关闭", null).show();
+    }
+
+    private void chooseEpisodeMenu() {
+        if (currentEpisode == null) return;
+        Models.Series series = findSeries(currentEpisode.seriesId);
+        if (series == null || series.episodes.isEmpty()) { notice("当前视频没有其他剧集"); return; }
+        int selected = -1;
+        String[] names = new String[series.episodes.size()];
+        for (int i = 0; i < names.length; i++) {
+            Models.Episode episode = series.episodes.get(i);
+            names[i] = "第 " + episode.index + " 集  " + episode.title;
+            if (episode.id.equals(currentEpisode.id)) selected = i;
+        }
+        new AlertDialog.Builder(this).setTitle("选集").setSingleChoiceItems(names, selected, (dialog, index) -> {
+            dialog.dismiss(); selectEpisode(series.episodes.get(index));
+        }).setNegativeButton("关闭", null).show();
+    }
+
+    private void chooseDisplayMenu() {
+        new AlertDialog.Builder(this).setTitle("画面显示")
+            .setItems(new String[]{"适应画面", "铺满画面（裁切边缘）", "缩小 −", "放大 ＋", "恢复 100%"}, (dialog, index) -> {
+                if (index == 0 || index == 1) {
+                    zoom = 1; applyZoom();
+                    playerView.setResizeMode(index == 0 ? AspectRatioFrameLayout.RESIZE_MODE_FIT : AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
+                } else if (index == 2) setZoom(zoom - .25f);
+                else if (index == 3) setZoom(zoom + .25f);
+                else setZoom(1);
+            }).setNegativeButton("关闭", null).show();
     }
 
     private void setZoom(float value) { zoom = Math.max(.5f, Math.min(3f, value)); applyZoom(); notice("画面缩放 " + Math.round(zoom * 100) + "%"); }
@@ -494,24 +569,21 @@ public final class MainActivity extends Activity {
 
     private void setFullScreen(boolean value) {
         fullScreen = value;
-        // Home remains reachable even when playback failed in full screen.
-        header.setVisibility(View.VISIBLE);
-        header.setPadding(dp(20), dp(value ? 4 : 18), dp(20), dp(value ? 4 : 12));
-        tagline.setVisibility(value ? View.GONE : View.VISIBLE);
-        loginButton.setVisibility(value ? View.GONE : View.VISIBLE);
-        addButton.setVisibility(value ? View.GONE : View.VISIBLE);
+        // The video owns its navigation in fullscreen; no outer bars consume space.
+        header.setVisibility(value ? View.GONE : View.VISIBLE);
         body.setVisibility(value ? View.GONE : View.VISIBLE);
         nav.setVisibility(value ? View.GONE : View.VISIBLE);
-        nowTitle.setVisibility(value ? View.GONE : View.VISIBLE); nowSubtitle.setVisibility(value ? View.GONE : View.VISIBLE);
-        if (value) {
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
-            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-        }
+        playerOverlay.setFullScreen(value);
+        applySystemBars();
+        setRequestedOrientation(value ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE : ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
         root.requestApplyInsets();
         resizeVideo();
+    }
+
+    private void applySystemBars() {
+        getWindow().getDecorView().setSystemUiVisibility(fullScreen
+            ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            : View.SYSTEM_UI_FLAG_VISIBLE);
     }
 
     private void resizeVideo() {
@@ -519,14 +591,24 @@ public final class MainActivity extends Activity {
             playerPanel.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1));
             videoFrame.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1));
         } else {
+            int width = root.getWidth() > 0 ? root.getWidth() - root.getPaddingLeft() - root.getPaddingRight()
+                : getResources().getDisplayMetrics().widthPixels;
+            int height = root.getHeight() > 0 ? root.getHeight() - root.getPaddingTop() - root.getPaddingBottom()
+                : getResources().getDisplayMetrics().heightPixels;
+            boolean compact = playerPanel.getVisibility() == View.VISIBLE && width > height;
+            header.setVisibility(compact ? View.GONE : View.VISIBLE);
+            nav.setPadding(dp(12), compact ? 0 : dp(6), dp(12), compact ? 0 : dp(10));
+            int reserved = compact ? dp(48) : Math.max(dp(92), header.getMeasuredHeight()) + dp(64);
+            int desired = Math.max(dp(180), Math.min(width * 9 / 16, height / 2));
+            int videoHeight = Math.min(desired, Math.max(dp(164), height - reserved));
             playerPanel.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
-            int width = getResources().getDisplayMetrics().widthPixels;
-            int screenHeight = getResources().getDisplayMetrics().heightPixels;
-            videoFrame.setLayoutParams(new LinearLayout.LayoutParams(-1, Math.min(width * 9 / 16, screenHeight / 3)));
+            videoFrame.setLayoutParams(new LinearLayout.LayoutParams(-1, videoHeight));
         }
     }
 
-    @Override public void onConfigurationChanged(Configuration configuration) { super.onConfigurationChanged(configuration); resizeVideo(); }
+    @Override public void onConfigurationChanged(Configuration configuration) {
+        super.onConfigurationChanged(configuration); playerOverlay.cancelInteraction(); resizeVideo(); root.requestApplyInsets();
+    }
     @Override public void onBackPressed() {
         if (fullScreen) { setFullScreen(false); return; }
         if (player != null || playerPanel.getVisibility() == View.VISIBLE || seriesPage || downloadsPage) { renderLibrary(); return; }
@@ -708,9 +790,21 @@ public final class MainActivity extends Activity {
     private static String speedText(float rate) { return String.format(Locale.ROOT, "%s×", rate); }
     private static String time(long milliseconds) { long total = Math.max(0, milliseconds) / 1000; return total >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", total / 3600, total / 60 % 60, total % 60) : String.format(Locale.ROOT, "%02d:%02d", total / 60, total % 60); }
 
-    @Override protected void onPause() { savePosition(); if (player != null) player.pause(); super.onPause(); }
+    @Override protected void onResume() {
+        super.onResume();
+        applySystemBars();
+        if (playerOverlay != null && player != null) playerOverlay.setActive(true);
+    }
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) applySystemBars();
+    }
+    @Override protected void onPause() {
+        if (playerOverlay != null) playerOverlay.setActive(false);
+        savePosition(); if (player != null) player.pause(); super.onPause();
+    }
     @Override protected void onDestroy() {
-        savePosition(); dead = true; ++selectionToken; handler.removeCallbacksAndMessages(null); io.shutdownNow();
+        savePosition(); playerOverlay.dispose(); dead = true; ++selectionToken; handler.removeCallbacksAndMessages(null); io.shutdownNow();
         if (player != null) { playerView.setPlayer(null); player.release(); player = null; }
         super.onDestroy();
     }
