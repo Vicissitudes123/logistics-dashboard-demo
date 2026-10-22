@@ -1,4 +1,4 @@
-name: Provide verified APK download
+name: Provide verified APK in a ZIP download
 
 on:
   push:
@@ -15,46 +15,55 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
-      actions: read
+    concurrency:
+      group: anime-shelf-apk-delivery
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: anime-shelf-apk
-      - name: Download previously verified build
-        uses: actions/download-artifact@v4
-        with:
-          name: anime-shelf-test-apk
-          run-id: 39703457406
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/anime-apk-delivery
-      - name: Verify and copy the exact delivered APK
-        env:
-          DELIVERY_INPUT: ${{ runner.temp }}/anime-apk-delivery
+      - name: Wrap the previously verified APK without changing its bytes
+        shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           from hashlib import sha256
-          import os
-          import shutil
-          candidates = list(Path(os.environ['DELIVERY_INPUT']).rglob('*.apk'))
-          assert len(candidates) == 1, 'Expected exactly one APK'
-          source = candidates[0]
-          expected = '47c844996876bb17da5a3373a7336725bdc999d4c5de938340029cf1b11b2df0'
-          assert source.stat().st_size == 4905850, 'APK size mismatch'
-          assert sha256(source.read_bytes()).hexdigest() == expected, 'APK hash mismatch'
-          target = Path('downloads/anime-shelf-0.1.1.apk')
-          target.parent.mkdir(exist_ok=True)
-          shutil.copyfile(source, target)
-          target.with_suffix('.apk.sha256').write_text(expected + '  ' + target.name + '\n')
-          print('Verified APK:', target, source.stat().st_size, 'bytes')
+          from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
+          source = Path('downloads/anime-shelf-0.1.3.apk')
+          expected = '6dc54acfb06580ecb9cd52e08aa1abddd16f2fa4827a87c7765f6a969d2e05d7'
+          payload = source.read_bytes()
+          assert len(payload) == 4922233, 'APK size mismatch'
+          assert sha256(payload).hexdigest() == expected, 'APK hash mismatch'
+          target = Path('downloads/anime-shelf-0.1.3-install.zip')
+          entry = ZipInfo(source.name, date_time=(2026, 10, 22, 0, 0, 0))
+          entry.compress_type = ZIP_DEFLATED
+          entry.create_system = 3
+          entry.external_attr = 0o100644 << 16
+          with ZipFile(target, 'w') as archive:
+              archive.writestr(entry, payload)
+          with ZipFile(target) as archive:
+              assert archive.namelist() == [source.name], 'Unexpected archive entries'
+              assert archive.testzip() is None, 'ZIP CRC failed'
+              assert sha256(archive.read(source.name)).hexdigest() == expected, 'APK changed in ZIP'
+          digest = sha256(target.read_bytes()).hexdigest()
+          target.with_suffix('.zip.sha256').write_text(digest + '  ' + target.name + '\n')
+          print('Verified ZIP:', target.name, target.stat().st_size, 'bytes, SHA-256', digest)
+          print('Contained APK SHA-256:', expected)
           PY
-      - name: Save download on the isolated application branch
+      - name: Save only the ZIP and checksum on the isolated application branch
+        shell: bash
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- downloads/anime-shelf-0.1.1.apk downloads/anime-shelf-0.1.1.apk.sha256
+          git add -- downloads/anime-shelf-0.1.3-install.zip downloads/anime-shelf-0.1.3-install.zip.sha256
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m 'Provide verified 0.1.1 APK for direct download [skip ci]'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Provide verified 0.1.3 APK inside ZIP for browser download [skip ci]'
           git push origin HEAD:refs/heads/anime-shelf-apk
+      - name: Upload the ZIP for independent verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: anime-shelf-zip-download
+          path: |
+            downloads/anime-shelf-0.1.3-install.zip
+            downloads/anime-shelf-0.1.3-install.zip.sha256
+          if-no-files-found: error
