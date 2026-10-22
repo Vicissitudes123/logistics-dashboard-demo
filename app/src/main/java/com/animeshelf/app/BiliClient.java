@@ -12,6 +12,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -274,6 +275,11 @@ public final class BiliClient {
                     quality.id = qn + ":" + codec + ":" + audioId;
                     Quality existing = seen.get(quality.id);
                     if (existing != null) {
+                        // The same qn/codec can describe a different encoded resource.
+                        // Only merge duplicate representations of the same path; a
+                        // cache continuation must never combine distinct media files.
+                        if (!URI.create(existing.videoUrl).getRawPath()
+                                .equals(URI.create(videoUrls.get(0)).getRawPath())) continue;
                         for (String candidate : videoUrls) {
                             if (!existing.videoUrls.contains(candidate)) existing.videoUrls.add(candidate);
                         }

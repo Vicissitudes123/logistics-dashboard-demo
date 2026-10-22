@@ -112,7 +112,9 @@ public final class ParserSelfTest {
                     "backup_url":["https://primary.example/v.m4s?token=a%2Fb&part=1",
                       "https://port.example:8443/v.m4s?token=fixture","file:///invalid",null,{},
                       "https://user@invalid.example/v.m4s","https://invalid.example/v.m4s#fragment"]},
-                    {"id":80,"codecid":7,"baseUrl":"https://repeated-track.example/v.m4s?token=fixture"}]}}
+                    {"id":80,"codecid":7,"baseUrl":"https://repeated-track.example/v.m4s?token=fixture"},
+                    {"id":80,"codecid":7,"baseUrl":"https://different-track.example/different-resource.m4s?token=fixture",
+                      "backup_url":["https://different-backup.example/different-resource.m4s?token=fixture"]}]}}
                 """));
         check(qualities.size() == 1, "Repeated representation contributes candidates rather than duplicate quality entries");
         Quality quality = qualities.get(0);
@@ -123,6 +125,7 @@ public final class ParserSelfTest {
         check(quality.videoUrls.get(4).contains("port.example"), "Exact HTTPS candidates precede upgraded legacy HTTP");
         check(quality.videoUrls.get(5).equals("https://legacy.example/v.m4s?token=fixture"), "Legacy HTTP upgrade is only a later candidate");
         check(quality.videoUrls.get(6).contains("repeated-track.example"), "Repeated stream source preserved");
+        check(quality.videoUrls.stream().noneMatch(url -> url.contains("different-resource.m4s")), "Same quality ID with a different resource path cannot enter the same cached track");
         check(quality.audioUrls.size() == 2 && quality.audioUrl.contains("audio-one.example"), "Backup-only audio is a usable track");
         check(quality.headers.get("User-Agent").equals(BiliClient.USER_AGENT)
                 && quality.headers.get("Referer").equals(BiliClient.REFERER), "API and media use shared request identity");
