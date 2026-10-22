@@ -1,39 +1,37 @@
-# 0.1.4 构建中
-
-0.1.4 / versionCode 5 的功能已接入，正在进行 Android CI 验证。下方保留上一次已核验交付；不表示新版已经通过真机或 CI 验证。
-
 # 当前交付状态
 
-番匣 **0.1.3 / versionCode 4**，包名 `com.animeshelf.app`，Android 8.0（API 26）及以上。源码提交 `2bad54e5bafe155e6c54c11e6f77fdb06edd45f2` 已在[构建 39710892022](https://github.com/Vicissitudes123/logistics-dashboard-demo/actions/runs/39710892022)通过全部检查并完成交付。
+番匣 **0.1.4 / versionCode 5**，包名 `com.animeshelf.app`，Android 8.0（API 26）及以上。源码提交 `63d3a001fc627e81583bfc249006a12df1ba6255` 在[构建 39719378308](https://github.com/Vicissitudes123/logistics-dashboard-demo/actions/runs/39719378308)通过检查，APK 与 ZIP 均已发布。
 
 ## 本轮改动
 
-用户已在手机确认 0.1.2 恢复播放。本轮修复播放器外部工具栏占据全屏的问题，加入视频内浮层控制及触摸手势：
-
-- 单击显隐、双击播放/暂停，播放时约 3.5 秒自动隐藏；暂停后手动隐藏不会被定时刷新弹回。
-- 右下角切换全屏；全屏隐藏外部页头和底栏，在视频内保留返回及首页入口。系统返回先退出全屏，再回首页。
-- 水平滑动显示目标进度，松手后跳转；左半屏上下调 0.25～3 倍速，右半屏上下调媒体音量。
-- 手势方向锁定、未知时长与不可跳转源禁用 seek、多指或取消不提交旧跳转；控制按钮与进度条各自接收触摸。
-- 视频内选集、速度与画面菜单；TextureView 支持适应、铺满及画面缩放；播放结束可从头重播。
-- 小横向窗口隐藏重复外栏并保留底部导航空间，恢复焦点/前台时重施全屏系统栏状态；退出保存观看进度并释放播放器。
-- 保持媒体请求、缓存键和下载存储结构，新增正常权限 `MODIFY_AUDIO_SETTINGS` 用于媒体音量，无运行时授权对话框。
+- 离线页按番剧 ID 分组、按数字集数排序，保留同集多个清晰度；分组支持进入、返回和删除整部。
+- 批量勾选集数、全选、统一清晰度与编码。逐集解析，已有任务跳过，失败任务重试，缺档报告并跳过，不自动降档。停止或离开前台仅停止后续加入，已排队下载继续。
+- 批量删除确认具体版本数与大小，按确认时的 key 快照操作，不删除片库与观看记录。删除后迟到的重试/解析不会复活任务。
+- 高密度屏幕图标使用 32dp 画布与 48dp 点击区域；统一背景后设置 padding，固定菜单标签关闭不需要的水平滚动。
+- 播放层改用 SurfaceView；视频信息展示实际输入轨的分辨率、色彩传递、已知位深、编码、码率及屏幕 HDR 能力，不把档位标签或能力当成 HDR 输出证明。
+- 缺少 DASH 档位标识的视频不借用顶层清晰度；刷新缺档列出实际选项。I/O 诊断区分提前结束、连接中断、协议、证书、文件等原因，保留安全主机/音画轨而不暴露签名 URL 或 Cookie。
+- 截断检测只在无限长度请求有已解析长度时执行，有限长度请求跨资源尾或从文件尾读取仍允许正常结束。
+- 不改既有媒体 User-Agent、缓存键、签名身份和下载存储方式；没有额外转码或画质重编码。
 
 ## 验证
 
-- 解析检查：92 项断言通过。
-- JUnit/Robolectric：47 项，0 失败、0 错误、0 跳过（导航 11、手势状态机 10、触摸控制层 9、请求 8、安全诊断 9）。
-- Android 编译、Lint、APK v2 签名验证通过。构建及交付 job 分别验证 APK 身份，实际证书与 0.1.0/0.1.1/0.1.2 一致。
-- 首轮旧测试夹具受默认窄屏 window traversal 影响，左侧坐标落到中线而失败；最终测试显式固定 640×360dp 并在初始布局后设定尺寸。没有将该失败解释为手机上的手势故障。
-- 此次没有安卓真机可供自动触摸验证；用户尚需安装确认手势触感和设备系统栏表现。自动化通过不等同所有设备均已验收。
+- 解析检查：105 项断言通过，离线合成接口响应，不访问用户账号。
+- JUnit/Robolectric：86 项，0 失败、0 错误、0 跳过。目录 7、批量 9、导航 14、安全诊断 12、媒体传输 12、手势 10、图标密度 4、触摸层 9、视频信息 9。
+- Android 编译、Lint、APK 签名验证通过。发布 job 再次验证字节、版本、证书，ZIP 仅包含同一个 APK。
+- 前两轮界面测试暴露背景覆盖 padding 和固定单行标签的无界水平滚动，最终修复后保留原测试约束全部通过。单行标签异常坐标是内容滚动坐标，不说明真机按钮框曾移出屏幕。
+- 本地 artifact 与远程公开文件的 Git blob SHA、大小一致；APK/ZIP CRC、SHA-256、包信息和证书报告已核对。
+- 公开网络样本测试：API 返回 412，不能据此确认账号接口状态；公开媒体样本手机 UA 返回 403，桌面 UA 返回 206 和有效 MP4 头。这不代表用户每一集已实测。
+- 无安卓真机连接；用户报告小米 14 在 B站 App 能播放 HDR。新版实际 HDR 输出、SurfaceView 缩放和此前具体 I/O 故障仍需在其手机上复测。截图不能单独判断 HDR；可查看「画面 → 视频信息 / HDR」。
 
-## APK 核验与下载
+## 安装包核验
 
-- Artifact：`12396981262`。
-- 大小：4,922,233 字节。
-- SHA-256：`6dc54acfb06580ecb9cd52e08aa1abddd16f2fa4827a87c7765f6a969d2e05d7`。
-- Git blob：`2f0784572b2b43403005a0c35d2c9c8211ab4821`，远程下载文件与本地 artifact 解出的 APK 字节一致。
-- 签名证书 SHA-256：`0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c`。
-- 交付提交：`90680d5dc21eeefe0c82c9619b1f4fd8ec0fa25e`。
-- [浏览器直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/90680d5dc21eeefe0c82c9619b1f4fd8ec0fa25e/downloads/anime-shelf-0.1.3.apk)。可覆盖安装保留应用数据，不要先卸载旧版。
+- Artifact：`12400113819`。
+- APK：4,946,189 字节；SHA-256 `05155e117ff74c5ee463f0bbf118467f91db26b50b3a01c9e586b9fe1f21fa44`。
+- APK Git blob：`3d3354f7106549fe7606fdff44611fe24ef2f1fc`。
+- ZIP：4,946,329 字节；SHA-256 `7860f719f4aaa794061429de46f74639eddb76523df906f77225108f9740432b`。
+- ZIP Git blob：`06aaf677fb1b9f19bab478a25bb96f7699f6b05d`。
+- 签名证书 SHA-256：`0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c`，与既有版本一致。
+- 交付提交：`6b08644939175c1a3cfd1e404c83cf95235f49b6`。
+- [ZIP 安装包](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/6b08644939175c1a3cfd1e404c83cf95235f49b6/downloads/anime-shelf-0.1.4-install.zip)；[直接 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/6b08644939175c1a3cfd1e404c83cf95235f49b6/downloads/anime-shelf-0.1.4.apk)。解压 ZIP 后打开 APK 覆盖安装，保留旧数据，不要先卸载。
 
-全部源码和下载仅位于 `anime-shelf-apk` 分支；原 main 保持 `414ff14c6c5a2bc34adee7fa4cbf40893c67817b`。
+源码和下载文件仅在 `anime-shelf-apk` 分支；原 main 核对仍为 `414ff14c6c5a2bc34adee7fa4cbf40893c67817b`。

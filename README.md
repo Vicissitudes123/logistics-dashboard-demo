@@ -2,9 +2,9 @@
 
 原生安卓测试版，Android 8.0（API 26）及以上。中文界面，视频、账号会话和观看记录保存在设备本地，不需要部署服务器。
 
-[浏览器直接下载 0.1.3 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/90680d5dc21eeefe0c82c9619b1f4fd8ec0fa25e/downloads/anime-shelf-0.1.3.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录。
+[下载 0.1.4 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/6b08644939175c1a3cfd1e404c83cf95235f49b6/downloads/anime-shelf-0.1.4-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/6b08644939175c1a3cfd1e404c83cf95235f49b6/downloads/anime-shelf-0.1.4.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
 
-**0.1.4 正在构建验证。** 用户已确认 0.1.3 可播放和使用手势；新版放大控制图标、改进 HDR 输出和错误诊断，并新增批量下载、批量删除及离线番剧分组。构建和验证状态见 `BUILD_STATUS.md`。
+**当前交付为 0.1.4。** 用户已确认 0.1.3 可播放和使用手势；新版放大控制图标、改进 HDR 输出和错误诊断，并新增批量下载、批量删除及离线番剧分组。构建和验证状态见 `BUILD_STATUS.md`。
 
 ## 使用
 
