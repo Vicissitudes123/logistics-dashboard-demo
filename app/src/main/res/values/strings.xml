@@ -4,9 +4,15 @@
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:colorAccent">#AE9BFF</item>
+        <item name="android:colorAccent">#8DB7FF</item>
         <item name="android:windowBackground">#10111B</item>
         <item name="android:statusBarColor">#10111B</item>
         <item name="android:navigationBarColor">#10111B</item>
     </style>
+    <style name="AppTheme.Blue" parent="AppTheme"><item name="android:colorAccent">#8DB7FF</item></style>
+    <style name="AppTheme.Purple" parent="AppTheme"><item name="android:colorAccent">#AF99FF</item></style>
+    <style name="AppTheme.Teal" parent="AppTheme"><item name="android:colorAccent">#77E0D2</item></style>
+    <style name="AppTheme.Green" parent="AppTheme"><item name="android:colorAccent">#8FD69D</item></style>
+    <style name="AppTheme.Orange" parent="AppTheme"><item name="android:colorAccent">#FFBB80</item></style>
+    <style name="AppTheme.Pink" parent="AppTheme"><item name="android:colorAccent">#F5A6CE</item></style>
 </resources>

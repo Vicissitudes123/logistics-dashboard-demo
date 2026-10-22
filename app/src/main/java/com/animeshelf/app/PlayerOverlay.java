@@ -40,6 +40,9 @@ public final class PlayerOverlay extends FrameLayout {
         long positionMs();
         long durationMs();
         float speed();
+        default float holdSpeed() { return 2f; }
+        default int controlsTimeoutMs() { return 3500; }
+        default int accentColor() { return 0xFF8DB7FF; }
         float brightness();
         void setBrightness(float brightness);
         void setTemporarySpeed(float speed);
@@ -72,7 +75,9 @@ public final class PlayerOverlay extends FrameLayout {
     private boolean temporaryBoost, longPressConsumed, doubleTapConsumed;
 
     private final Runnable hide = new Runnable() {
-        @Override public void run() { if (active && host.isPlaying() && !scrubbing && !gestures.isDragging()) hideControls(); }
+        @Override public void run() {
+            if (controlsTimeoutMs() != 0 && active && host.isPlaying() && !scrubbing && !gestures.isDragging()) hideControls();
+        }
     };
     private final Runnable hideFeedback = new Runnable() {
         @Override public void run() { feedback.setVisibility(GONE); }
@@ -126,7 +131,7 @@ public final class PlayerOverlay extends FrameLayout {
         position.setSingleLine(true); duration.setSingleLine(true);
         timeline.addView(position, new LinearLayout.LayoutParams(dp(54), dp(32)));
         seekBar = new SeekBar(context); seekBar.setMax(1000); seekBar.setContentDescription("播放进度");
-        seekBar.setProgressTintList(ColorStateList.valueOf(Color.WHITE));
+        seekBar.setProgressTintList(ColorStateList.valueOf(host.accentColor()));
         seekBar.setProgressBackgroundTintList(ColorStateList.valueOf(0x66FFFFFF));
         seekBar.setThumbTintList(ColorStateList.valueOf(Color.WHITE));
         seekBar.setPadding(dp(8), 0, dp(8), 0);
@@ -185,10 +190,13 @@ public final class PlayerOverlay extends FrameLayout {
                     || gestures.getMode() != PlaybackGestures.Mode.PENDING || !host.hasPlayer() || !host.isPlaying()) return;
                 float speed = host.speed();
                 speedBeforeHold = Float.isNaN(speed) || Float.isInfinite(speed) || speed <= 0 ? 1f : speed;
+                float configured = host.holdSpeed();
+                if (!Float.isFinite(configured) || configured < 1.25f || configured > 3f) configured = 2f;
+                float heldSpeed = Math.max(configured, speedBeforeHold);
                 longPressConsumed = true; temporaryBoost = true;
-                host.setTemporarySpeed(Math.max(2f, speedBeforeHold));
+                host.setTemporarySpeed(heldSpeed);
                 hideControls();
-                showFeedback(speedText(Math.max(2f, speedBeforeHold)) + " 加速中\n松手恢复 " + speedText(speedBeforeHold));
+                showFeedback(speedText(heldSpeed) + " 加速中\n松手恢复 " + speedText(speedBeforeHold));
             }
             @Override public boolean onDoubleTap(MotionEvent event) {
                 if (!active || multiTouch || !host.hasPlayer()) return false;
@@ -222,6 +230,11 @@ public final class PlayerOverlay extends FrameLayout {
     /** Insets supplied by the window; no system gesture exclusion region is requested. */
     public void setSystemGestureInset(int left, int top, int right, int bottom) {
         edgeInsetPx = Math.max(dp(20), Math.max(Math.max(left, right), Math.max(top, bottom)));
+    }
+
+    /** Theme updates only repaint the existing control; visibility timers keep their deadline. */
+    public void refreshTheme() {
+        seekBar.setProgressTintList(ColorStateList.valueOf(host.accentColor()));
     }
 
     public void refresh() {
@@ -361,9 +374,16 @@ public final class PlayerOverlay extends FrameLayout {
         return true;
     }
 
+    private int controlsTimeoutMs() {
+        int timeout = host.controlsTimeoutMs();
+        return timeout == 0 || timeout == 3500 || timeout == 5000 || timeout == 8000 ? timeout : 3500;
+    }
+
     private void scheduleHide() {
         handler.removeCallbacks(hide);
-        if (active && controlsVisible && host.isPlaying() && !scrubbing && !gestures.isDragging()) handler.postDelayed(hide, 3500);
+        int timeout = controlsTimeoutMs();
+        if (timeout > 0 && active && controlsVisible && host.isPlaying() && !scrubbing && !gestures.isDragging())
+            handler.postDelayed(hide, timeout);
     }
     private void showFeedback(String value) { handler.removeCallbacks(hideFeedback); feedback.setText(value); feedback.setVisibility(VISIBLE); }
     private void dismissFeedbackSoon() { handler.removeCallbacks(hideFeedback); handler.postDelayed(hideFeedback, 1000); }

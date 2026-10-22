@@ -200,6 +200,60 @@ public class PlayerOverlayTest {
         }
     }
 
+    @Test public void configuredHoldSpeedIsTemporaryAndNeverSlowsFasterPlayback() {
+        for (float[] scenario : new float[][]{{.75f, 1.5f, 1.5f}, {1.5f, 3f, 3f}, {3f, 1.5f, 3f}}) {
+            host.speed = scenario[0];
+            host.holdSpeed = scenario[1];
+            overlay.hideControls();
+            down(200, 160);
+            idle(ViewConfiguration.getLongPressTimeout() + 1);
+            assertEquals("Configured hold speed or the faster original speed", scenario[2], host.speed, .001f);
+            touch(MotionEvent.ACTION_UP, 200, 160);
+            idle(ViewConfiguration.getDoubleTapTimeout() + 50);
+            assertEquals("Release restores the precise original speed", scenario[0], host.speed, .001f);
+            assertEquals("Hold configuration itself is unchanged", scenario[1], host.holdSpeed, .001f);
+            assertEquals(0, host.persistedSpeedChanges);
+            assertEquals(0, host.playbackToggles);
+            assertEquals(0, host.seekCalls);
+        }
+    }
+
+    @Test public void invalidHoldSpeedsFallBackWithoutPersistingOrStrandingTheTemporaryRate() {
+        for (float configured : new float[]{Float.NaN, Float.POSITIVE_INFINITY, -1f, 1f, 4f}) {
+            host.speed = .75f;
+            host.holdSpeed = configured;
+            overlay.hideControls();
+            down(200, 160);
+            idle(ViewConfiguration.getLongPressTimeout() + 1);
+            assertEquals("Invalid hold setting " + configured, 2f, host.speed, .001f);
+            touch(MotionEvent.ACTION_CANCEL, 200, 160);
+            idle(ViewConfiguration.getDoubleTapTimeout() + 50);
+            assertEquals(.75f, host.speed, .001f);
+            assertEquals(0, host.persistedSpeedChanges);
+        }
+    }
+
+    @Test public void disablingAutoHideCancelsTheOldTimerAndFiveSecondsIsAppliedExactly() {
+        host.controlsTimeoutMs = 0;
+        overlay.showControls();
+        idle(10000);
+        assertTrue("A zero timeout keeps controls visible even after the old 3.5 s timer", overlay.areControlsVisible());
+
+        host.controlsTimeoutMs = 5000;
+        overlay.showControls();
+        idle(4999);
+        assertTrue("The selected five-second timeout has not elapsed", overlay.areControlsVisible());
+        idle(2);
+        assertFalse(overlay.areControlsVisible());
+
+        host.controlsTimeoutMs = -1;
+        overlay.showControls();
+        idle(3499);
+        assertTrue("An invalid timeout uses the default 3.5 seconds", overlay.areControlsVisible());
+        idle(2);
+        assertFalse(overlay.areControlsVisible());
+    }
+
     @Test public void everyInterruptedLongPressRestoresSpeedAndDiscardsTheTouchStream() {
         for (String interruption : new String[]{"cancel", "second finger", "drag", "pause", "navigation", "dispose"}) {
             overlay.setActive(true);
@@ -404,7 +458,8 @@ public class PlayerOverlayTest {
     private static final class FakeHost implements PlayerOverlay.Host {
         boolean playing = true, seekable = true;
         long position = 60000, duration = 300000;
-        float speed = 1f, brightness = .5f;
+        float speed = 1f, brightness = .5f, holdSpeed = 2f;
+        int controlsTimeoutMs = 3500;
         int playbackToggles, fullscreenToggles, seekCalls, observations, persistedSpeedChanges, temporarySpeedChanges;
         @Override public boolean hasPlayer() { observations++; return true; }
         @Override public boolean isPlaying() { observations++; return playing; }
@@ -412,6 +467,8 @@ public class PlayerOverlayTest {
         @Override public long positionMs() { observations++; return position; }
         @Override public long durationMs() { observations++; return duration; }
         @Override public float speed() { observations++; return speed; }
+        @Override public float holdSpeed() { observations++; return holdSpeed; }
+        @Override public int controlsTimeoutMs() { observations++; return controlsTimeoutMs; }
         @Override public void togglePlayback() { playbackToggles++; playing = !playing; }
         @Override public void seekTo(long value) { seekCalls++; position = value; }
         @Override public void setSpeed(float value) { persistedSpeedChanges++; speed = value; }

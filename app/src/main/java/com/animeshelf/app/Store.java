@@ -23,11 +23,51 @@ public final class Store {
         } catch (Exception ignored) { }
         return result;
     }
+    /** Hiding affects only home-page membership, never offline metadata or viewing history. */
+    public synchronized List<Models.Series> listVisibleSeries() {
+        ArrayList<Models.Series> visible = new ArrayList<>();
+        for (Models.Series series : listSeries()) if (!prefs.getBoolean("hidden:" + series.id, false)) visible.add(series);
+        return visible;
+    }
+    public synchronized List<Models.Series> listHiddenSeries() {
+        ArrayList<Models.Series> hidden = new ArrayList<>();
+        for (Models.Series series : listSeries()) if (prefs.getBoolean("hidden:" + series.id, false)) hidden.add(series);
+        return hidden;
+    }
+    public void hideSeries(String id) {
+        if (validId(id)) prefs.edit().putBoolean("hidden:" + id, true).apply();
+    }
+    public void restoreSeries(String id) {
+        if (validId(id)) prefs.edit().remove("hidden:" + id).apply();
+    }
+    public boolean isPinned(String id) { return validId(id) && prefs.getBoolean("pinned:" + id, false); }
+    public void setPinned(String id, boolean pinned) {
+        if (!validId(id)) return;
+        if (pinned) prefs.edit().putBoolean("pinned:" + id, true).apply();
+        else prefs.edit().remove("pinned:" + id).apply();
+    }
+    private static boolean validId(String id) { return id != null && !id.trim().isEmpty(); }
+
+    /** An unplayed import never becomes "recent" merely because it is first in the catalogue. */
+    public synchronized String getRecentVisibleSeriesId() {
+        String preferred = getLastSeries(), recentId = "";
+        long recentAt = 0;
+        for (Models.Series series : listVisibleSeries()) {
+            long watchedAt = 0;
+            for (Models.Episode episode : series.episodes)
+                if (episode != null && validId(episode.id)) watchedAt = Math.max(watchedAt, getProgress(episode.id).updatedAt);
+            if (watchedAt <= 0) continue;
+            if (series.id.equals(preferred)) return series.id;
+            if (watchedAt > recentAt) { recentAt = watchedAt; recentId = series.id; }
+        }
+        return recentId;
+    }
     public synchronized void saveSeries(Models.Series series) {
         List<Models.Series> all = listSeries();
         all.removeIf(s -> s.id.equals(series.id));
         all.add(0, series);
         writeSeries(all);
+        restoreSeries(series.id);
     }
     public synchronized void deleteSeries(String id) {
         List<Models.Series> all = listSeries();
@@ -68,6 +108,31 @@ public final class Store {
     public String getLastSeries() { return prefs.getString("lastSeries", ""); }
     public float getSpeed() { return prefs.getFloat("speed", 1f); }
     public void setSpeed(float speed) { prefs.edit().putFloat("speed", speed).apply(); }
+    public String getThemeId() {
+        try { return ThemePalette.get(prefs.getString("theme", ThemePalette.DEFAULT_ID)).id; }
+        catch (ClassCastException ignored) { return ThemePalette.DEFAULT_ID; }
+    }
+    public void setThemeId(String themeId) { prefs.edit().putString("theme", ThemePalette.get(themeId).id).apply(); }
+    public float getHoldSpeed() {
+        try { return holdSpeed(prefs.getFloat("holdSpeed", 2f)); }
+        catch (ClassCastException ignored) { return 2f; }
+    }
+    public void setHoldSpeed(float speed) { prefs.edit().putFloat("holdSpeed", holdSpeed(speed)).apply(); }
+    private static float holdSpeed(float speed) {
+        return speed == 1.5f || speed == 2f || speed == 2.5f || speed == 3f ? speed : 2f;
+    }
+    public int getControlsTimeoutMs() {
+        try { return controlsTimeout(prefs.getInt("controlsTimeoutMs", 3500)); }
+        catch (ClassCastException ignored) { return 3500; }
+    }
+    public void setControlsTimeoutMs(int timeoutMs) { prefs.edit().putInt("controlsTimeoutMs", controlsTimeout(timeoutMs)).apply(); }
+    private static int controlsTimeout(int timeoutMs) {
+        return timeoutMs == 3500 || timeoutMs == 5000 || timeoutMs == 8000 || timeoutMs == 0 ? timeoutMs : 3500;
+    }
+    /** Reset preferences only: library membership, pins, history, login and downloads survive. */
+    public void resetAppearanceAndPlaybackSettings() {
+        prefs.edit().remove("theme").remove("speed").remove("holdSpeed").remove("controlsTimeoutMs").apply();
+    }
     public synchronized List<JSONObject> savedDownloads() {
         ArrayList<JSONObject> result = new ArrayList<>();
         try {

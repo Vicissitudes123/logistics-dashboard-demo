@@ -21,6 +21,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
+import android.content.res.ColorStateList;
+import android.text.Editable;
+import android.text.TextWatcher;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -63,7 +68,7 @@ public final class MainActivity extends Activity {
     private static final int PANEL_LIGHT = Color.rgb(36, 41, 59);
     private static final int TEXT = Color.rgb(242, 243, 251);
     private static final int MUTED = Color.rgb(158, 168, 190);
-    private static final int PURPLE = Color.rgb(175, 153, 255);
+    private int accentColor = 0xFF8DB7FF;
     private static final int AQUA = Color.rgb(119, 224, 210);
     private static final int PICK_VIDEO = 101;
 
@@ -95,6 +100,10 @@ public final class MainActivity extends Activity {
     private final Set<String> selectedEpisodeIds = new LinkedHashSet<>();
     private final Set<String> selectedDownloadKeys = new LinkedHashSet<>();
     private float originalWindowBrightness = -1f, playbackBrightness = -1f;
+    private boolean settingsPage;
+    private EditText librarySearch;
+    private LinearLayout libraryResults;
+    private String libraryQuery = "";
 
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
@@ -106,13 +115,14 @@ public final class MainActivity extends Activity {
     };
 
     @Override public void onCreate(Bundle state) {
+        store = new Store(this);
+        applyTheme();
         super.onCreate(state);
         originalWindowBrightness = getWindow().getAttributes().screenBrightness;
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-        store = new Store(this);
         media = MediaRepository.get(this);
         buildUi();
         handler.post(ticker);
@@ -181,6 +191,9 @@ public final class MainActivity extends Activity {
             @Override public long positionMs() { return player == null ? 0 : player.getCurrentPosition(); }
             @Override public long durationMs() { return player == null ? -1 : player.getDuration(); }
             @Override public float speed() { return player == null ? store.getSpeed() : player.getPlaybackParameters().speed; }
+            @Override public float holdSpeed() { return store.getHoldSpeed(); }
+            @Override public int controlsTimeoutMs() { return store.getControlsTimeoutMs(); }
+            @Override public int accentColor() { return accentColor; }
             @Override public float brightness() { return currentPlaybackBrightness(); }
             @Override public void setBrightness(float value) { setPlaybackBrightness(value); }
             @Override public void setTemporarySpeed(float rate) { setTemporaryPlaybackSpeed(rate); }
@@ -211,6 +224,7 @@ public final class MainActivity extends Activity {
         nav = row(); nav.setPadding(dp(12), dp(6), dp(12), dp(10)); nav.setBackgroundColor(PANEL);
         addEqual(nav, button("首页 · 番剧库", false, v -> renderLibrary()));
         addEqual(nav, button("离线下载", false, v -> openDownloads()));
+        addEqual(nav, button("设置", false, v -> renderSettings()));
         // Keep navigation outside the shrinking list area below the player.
         root.addView(nav);
     }
@@ -246,41 +260,243 @@ public final class MainActivity extends Activity {
     }
 
     private void renderLibrary() {
-        clearListSelection();
-        closePlayback();
-        downloadGroupId = null;
-        currentSeries = null;
-        downloadsPage = false; seriesPage = false; content.removeAllViews();
-        scroll.scrollTo(0, 0);
-        title("我的番剧", "剧集、离线文件和观看记录，都保存在这台设备");
-        List<Models.Series> series = store.listSeries();
-        if (series.isEmpty()) {
-            empty("你的故事，从这里开始", "添加 B站链接，或导入已经保存的视频。\n番匣会记住你每一集看到的位置。", "添加第一部番剧", this::addMenu);
-            return;
-        }
-        for (Models.Series entry : series) {
-            LinearLayout card = card();
-            TextView title = text(entry.title, 18, TEXT); title.setTypeface(null, Typeface.BOLD); card.addView(title);
-            String lastId = store.getLastEpisode(entry.id);
-            Models.Episode episode = findEpisode(entry, lastId);
-            if (episode == null && !entry.episodes.isEmpty()) episode = entry.episodes.get(0);
-            String detail = entry.episodes.size() + " 集";
-            if (episode != null && lastId != null && !lastId.isEmpty()) {
-                Store.Progress progress = store.getProgress(episode.id);
-                detail += "  ·  上次看到第 " + episode.index + " 集  " + time(progress.positionMs);
+        clearListSelection(); closePlayback();
+        downloadGroupId = null; currentSeries = null;
+        settingsPage = false; downloadsPage = false; seriesPage = false;
+        content.removeAllViews(); scroll.scrollTo(0, 0);
+        LinearLayout searchRow = row();
+        librarySearch = new EditText(this);
+        librarySearch.setSingleLine(true); librarySearch.setTextSize(16);
+        librarySearch.setTextColor(TEXT); librarySearch.setHintTextColor(MUTED);
+        librarySearch.setHint("搜索番剧，如高木 / JOJO"); librarySearch.setContentDescription("搜索番剧");
+        librarySearch.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        librarySearch.setBackgroundTintList(ColorStateList.valueOf(accentColor));
+        librarySearch.setPadding(dp(12), dp(10), dp(12), dp(10));
+        librarySearch.setText(libraryQuery);
+        searchRow.addView(librarySearch, new LinearLayout.LayoutParams(0, dp(52), 1));
+        searchRow.addView(button("清空", false, v -> librarySearch.setText("")));
+        content.addView(searchRow, gapLayout());
+        libraryResults = column(); content.addView(libraryResults);
+        librarySearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
+            @Override public void afterTextChanged(Editable value) {
+                libraryQuery = value.toString(); renderLibraryResults(); scroll.scrollTo(0, 0);
             }
-            TextView subtitle = text(detail, 12, MUTED); subtitle.setPadding(0, dp(7), 0, dp(12)); card.addView(subtitle);
-            LinearLayout actions = row();
-            Models.Episode resume = episode;
-            addEqual(actions, button(lastId == null || lastId.isEmpty() ? "开始观看" : "继续观看", true, v -> {
-                currentSeries = entry; renderSeries(entry); if (resume != null) selectEpisode(resume);
-            }));
-            addEqual(actions, button("选集", false, v -> { currentSeries = entry; renderSeries(entry); }));
-            card.addView(actions); content.addView(card, gapLayout());
+        });
+        librarySearch.setOnEditorActionListener((view, action, event) -> {
+            if (action != EditorInfo.IME_ACTION_SEARCH) return false;
+            dismissLibraryKeyboard(); return true;
+        });
+        renderLibraryResults();
+        root.setFocusableInTouchMode(true); root.requestFocus();
+    }
+
+    private void renderLibraryResults() {
+        if (libraryResults == null || settingsPage || seriesPage || downloadsPage) return;
+        libraryResults.removeAllViews();
+        List<Models.Series> visible = store.listVisibleSeries();
+        LibraryCatalogue.Sections sections = LibraryCatalogue.build(visible, libraryQuery,
+            store.getRecentVisibleSeriesId(), store::isPinned);
+        TextView heading = text("我的番剧", 21, TEXT); heading.setTypeface(null, Typeface.BOLD);
+        heading.setPadding(0, dp(5), 0, dp(5)); libraryResults.addView(heading);
+        TextView count = text(sections.total + " 部" + (libraryQuery.trim().isEmpty() ? " · 长按番剧或点管理，可置顶与移除" : "符合搜索 · 支持部分片名和空格分词"), 12, MUTED);
+        count.setPadding(0, 0, 0, dp(16)); libraryResults.addView(count);
+        if (sections.total == 0) {
+            LinearLayout box = card();
+            box.addView(text(visible.isEmpty() ? "还没有显示在首页的番剧" : "没有找到匹配的番剧", 17, TEXT));
+            TextView note = text(visible.isEmpty() ? "添加新的番剧，或到设置恢复已移除的番剧。" : "试试片名中的几个字，例如「高木」。", 13, MUTED);
+            note.setPadding(0, dp(10), 0, dp(12)); box.addView(note);
+            box.addView(button(visible.isEmpty() ? "添加番剧" : "清空搜索", true,
+                v -> { if (visible.isEmpty()) addMenu(); else librarySearch.setText(""); }));
+            libraryResults.addView(box, gapLayout()); return;
+        }
+        if (sections.recent != null) {
+            librarySection("最近观看"); addLibraryCard(sections.recent);
+        }
+        if (!sections.pinned.isEmpty()) {
+            librarySection("置顶番剧"); for (Models.Series series : sections.pinned) addLibraryCard(series);
+        }
+        if (!sections.others.isEmpty()) {
+            librarySection("其他番剧"); for (Models.Series series : sections.others) addLibraryCard(series);
         }
     }
 
+    private void librarySection(String label) {
+        TextView heading = text(label, 14, MUTED); heading.setTypeface(null, Typeface.BOLD);
+        heading.setPadding(0, dp(4), 0, dp(10)); libraryResults.addView(heading);
+    }
+
+    private void addLibraryCard(Models.Series entry) {
+        LinearLayout card = card(); card.setContentDescription("番剧：" + entry.id);
+        TextView title = text(entry.title, 18, TEXT); title.setTypeface(null, Typeface.BOLD); card.addView(title);
+        String lastId = store.getLastEpisode(entry.id);
+        Models.Episode episode = findEpisode(entry, lastId);
+        if (episode == null && !entry.episodes.isEmpty()) episode = entry.episodes.get(0);
+        String detail = entry.episodes.size() + " 集" + (store.isPinned(entry.id) ? " · 已置顶" : "");
+        if (episode != null && lastId != null && !lastId.isEmpty()) {
+            Store.Progress progress = store.getProgress(episode.id);
+            detail += " · 上次第 " + episode.index + " 集 " + time(progress.positionMs);
+        }
+        TextView subtitle = text(detail, 12, MUTED); subtitle.setPadding(0, dp(7), 0, dp(12)); card.addView(subtitle);
+        LinearLayout actions = row(); Models.Episode resume = episode;
+        addEqual(actions, button(lastId == null || lastId.isEmpty() ? "开始观看" : "继续观看", true, v -> {
+            renderSeries(entry); if (resume != null) selectEpisode(resume);
+        }));
+        addEqual(actions, button("选集", false, v -> renderSeries(entry)));
+        Button manage = button("管理", false, v -> showLibraryActions(entry));
+        manage.setContentDescription("管理番剧：" + entry.id); addEqual(actions, manage);
+        card.addView(actions);
+        card.setOnClickListener(v -> renderSeries(entry));
+        card.setOnLongClickListener(v -> { showLibraryActions(entry); return true; });
+        libraryResults.addView(card, gapLayout());
+    }
+
+    private void showLibraryActions(Models.Series series) {
+        dismissLibraryKeyboard();
+        new AlertDialog.Builder(this).setTitle(series.title)
+            .setItems(new String[]{store.isPinned(series.id) ? "取消置顶" : "置顶", "从首页移除"}, (dialog, index) -> {
+                if (index == 0) {
+                    store.setPinned(series.id, !store.isPinned(series.id)); renderLibraryResults();
+                } else confirmHideSeries(series);
+            }).setNegativeButton("取消", null).show();
+    }
+
+    private void confirmHideSeries(Models.Series series) {
+        new AlertDialog.Builder(this).setTitle("从首页移除这部番剧？")
+            .setMessage(series.title + "\n\n保留已下载视频和观看记录，可在「设置 → 已移除番剧」恢复。")
+            .setNegativeButton("取消", null).setPositiveButton("移除", (dialog, which) -> {
+                store.hideSeries(series.id); renderLibraryResults(); notice("已从首页移除");
+            }).show();
+    }
+
+    private void dismissLibraryKeyboard() {
+        InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (keyboard != null && librarySearch != null) keyboard.hideSoftInputFromWindow(librarySearch.getWindowToken(), 0);
+    }
+
+    private void applyTheme() {
+        ThemePalette palette = ThemePalette.get(store.getThemeId());
+        accentColor = palette.accent;
+        int style;
+        switch (palette.id) {
+            case "purple": style = R.style.AppTheme_Purple; break;
+            case "teal": style = R.style.AppTheme_Teal; break;
+            case "green": style = R.style.AppTheme_Green; break;
+            case "orange": style = R.style.AppTheme_Orange; break;
+            case "pink": style = R.style.AppTheme_Pink; break;
+            default: style = R.style.AppTheme_Blue;
+        }
+        setTheme(style);
+        getTheme().applyStyle(style, true);
+        if (addButton != null) addButton.setBackground(background(accentColor, 11));
+        if (librarySearch != null) librarySearch.setBackgroundTintList(ColorStateList.valueOf(accentColor));
+        if (playerOverlay != null) playerOverlay.refreshTheme();
+    }
+
+    private void renderSettings() {
+        dismissLibraryKeyboard(); clearListSelection(); closePlayback();
+        settingsPage = true; downloadsPage = false; seriesPage = false; downloadGroupId = null;
+        content.removeAllViews(); scroll.scrollTo(0, 0);
+        title("设置", "外观、播放习惯和设备内的数据管理");
+        settingRow("主题色", ThemePalette.get(store.getThemeId()).name + " · 点击更换按钮和进度条颜色", "主题色设置", this::chooseTheme);
+        settingRow("常用倍速", speedText(store.getSpeed()) + " · 打开视频时使用", "常用倍速设置", this::chooseDefaultSpeed);
+        settingRow("长按加速", speedText(store.getHoldSpeed()) + " · 松手恢复原速，原速更高时保持原速", "长按加速设置", this::chooseHoldSpeed);
+        int timeout = store.getControlsTimeoutMs();
+        settingRow("控制栏自动隐藏", timeout == 0 ? "不自动隐藏 · 仍可轻点画面收起" : (timeout / 1000f) + " 秒", "控制栏自动隐藏设置", this::chooseControlsTimeout);
+        settingRow("已移除番剧", store.listHiddenSeries().size() + " 部 · 点击恢复到首页", "已移除番剧", this::restoreHiddenSeriesMenu);
+        long bytes = 0; int complete = 0;
+        List<MediaRepository.OfflineItem> items = media.downloads();
+        for (MediaRepository.OfflineItem item : items) {
+            bytes += Math.max(0, item.bytesDownloaded);
+            if (item.complete) complete++;
+        }
+        settingRow("离线视频", "已完成 " + complete + " 份 / 共 " + items.size() + " 个任务 · 约 "
+            + android.text.format.Formatter.formatShortFileSize(this, bytes) + "\n点击查看与管理；卸载或清除应用数据会删除下载。", "管理离线视频", this::openDownloads);
+        settingRow("重置外观和播放设置", "恢复默认蓝色、1.0× 常用倍速、2.0× 长按加速及 3.5 秒自动隐藏", "重置设置", this::confirmResetSettings);
+        String version = "";
+        try { version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
+        catch (PackageManager.NameNotFoundException ignored) { }
+        TextView note = text("番匣 " + version + "\n设置仅保存在本机。重置设置不会清除番剧、置顶、下载、观看记录或登录状态。", 12, MUTED);
+        note.setPadding(dp(6), dp(8), dp(6), dp(16)); content.addView(note);
+    }
+
+    private void settingRow(String heading, String detail, String description, Runnable action) {
+        LinearLayout box = card(); box.setContentDescription(description);
+        LinearLayout line = row();
+        TextView name = text(heading, 17, TEXT); name.setTypeface(null, Typeface.BOLD);
+        line.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        line.addView(text("›", 24, accentColor)); box.addView(line);
+        TextView subtitle = text(detail, 13, MUTED); subtitle.setPadding(0, dp(7), 0, dp(3));
+        box.addView(subtitle); box.setOnClickListener(v -> action.run());
+        content.addView(box, gapLayout());
+    }
+
+    private void chooseTheme() {
+        List<ThemePalette> palettes = ThemePalette.entries();
+        String[] labels = new String[palettes.size()]; int selected = 0;
+        for (int i = 0; i < palettes.size(); i++) {
+            labels[i] = palettes.get(i).name;
+            if (palettes.get(i).id.equals(store.getThemeId())) selected = i;
+        }
+        new AlertDialog.Builder(this).setTitle("主题色")
+            .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                store.setThemeId(palettes.get(which).id); applyTheme();
+                dialog.dismiss(); renderSettings();
+            }).setNegativeButton("取消", null).show();
+    }
+
+    private void chooseDefaultSpeed() {
+        float[] values = {.25f, .5f, .75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f};
+        String[] labels = new String[values.length]; int selected = 3;
+        for (int i = 0; i < values.length; i++) { labels[i] = speedText(values[i]); if (values[i] == store.getSpeed()) selected = i; }
+        new AlertDialog.Builder(this).setTitle("常用倍速")
+            .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                setPlaybackSpeed(values[which]); dialog.dismiss(); renderSettings();
+            }).setNegativeButton("取消", null).show();
+    }
+
+    private void chooseHoldSpeed() {
+        float[] values = {1.5f, 2f, 2.5f, 3f}; String[] labels = new String[values.length]; int selected = 1;
+        for (int i = 0; i < values.length; i++) { labels[i] = speedText(values[i]); if (values[i] == store.getHoldSpeed()) selected = i; }
+        new AlertDialog.Builder(this).setTitle("长按临时加速")
+            .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                store.setHoldSpeed(values[which]); dialog.dismiss(); renderSettings();
+            }).setNegativeButton("取消", null).show();
+    }
+
+    private void chooseControlsTimeout() {
+        int[] values = {3500, 5000, 8000, 0}; String[] labels = {"3.5 秒（默认）", "5 秒", "8 秒", "不自动隐藏"}; int selected = 0;
+        for (int i = 0; i < values.length; i++) if (values[i] == store.getControlsTimeoutMs()) selected = i;
+        new AlertDialog.Builder(this).setTitle("控制栏自动隐藏")
+            .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                store.setControlsTimeoutMs(values[which]); playerOverlay.showControls();
+                dialog.dismiss(); renderSettings();
+            }).setNegativeButton("取消", null).show();
+    }
+
+    private void restoreHiddenSeriesMenu() {
+        List<Models.Series> hidden = store.listHiddenSeries();
+        if (hidden.isEmpty()) { error("已移除番剧", "没有已移除的番剧。"); return; }
+        String[] titles = new String[hidden.size()];
+        for (int i = 0; i < hidden.size(); i++) titles[i] = hidden.get(i).title;
+        new AlertDialog.Builder(this).setTitle("选择要恢复的番剧")
+            .setItems(titles, (dialog, which) -> {
+                store.restoreSeries(hidden.get(which).id); notice("已恢复到首页");
+                if (settingsPage) renderSettings(); else renderLibraryResults();
+            }).setNegativeButton("取消", null).show();
+    }
+
+    private void confirmResetSettings() {
+        new AlertDialog.Builder(this).setTitle("恢复默认外观和播放设置？")
+            .setMessage("不会清除番剧、置顶、下载、观看记录或登录状态。")
+            .setNegativeButton("取消", null).setPositiveButton("恢复默认", (dialog, which) -> {
+                store.resetAppearanceAndPlaybackSettings(); applyTheme(); renderSettings();
+            }).show();
+    }
+
     private void renderSeries(Models.Series series) {
+        dismissLibraryKeyboard(); settingsPage = false;
         clearListSelection();
         closePlayback();
         renderSeriesContent(series);
@@ -291,7 +507,7 @@ public final class MainActivity extends Activity {
     private void renderSeriesContent(Models.Series series) {
         if (downloadSelectionMode || (episodeSelectionMode && !series.id.equals(selectionSeriesId))) clearListSelection();
         ++selectionToken;
-        downloadsPage = false; seriesPage = true; currentSeries = series; content.removeAllViews();
+        settingsPage = false; downloadsPage = false; seriesPage = true; currentSeries = series; content.removeAllViews();
         content.addView(button("‹  回到首页", false, v -> renderLibrary()));
         title(series.title, series.episodes.size() + " 集  ·  点击播放，长按多选下载");
         boolean hasOnlineEpisodes = false;
@@ -307,7 +523,7 @@ public final class MainActivity extends Activity {
         for (Models.Episode episode : DownloadCatalogue.episodes(series.episodes)) {
             LinearLayout card = card(); card.setPadding(dp(14), dp(12), dp(14), dp(12));
             LinearLayout line = row();
-            TextView num = text(String.format(Locale.ROOT, "%02d", episode.index), 22, PURPLE);
+            TextView num = text(String.format(Locale.ROOT, "%02d", episode.index), 22, accentColor);
             num.setTypeface(null, Typeface.BOLD); num.setGravity(Gravity.CENTER); line.addView(num, new LinearLayout.LayoutParams(dp(44), -2));
             LinearLayout labels = column();
             TextView name = text(episode.title, 15, TEXT); name.setMaxLines(2); labels.addView(name);
@@ -349,7 +565,7 @@ public final class MainActivity extends Activity {
     private void markSelection(View card, boolean selected) {
         card.setSelected(selected);
         GradientDrawable shape = background(selected ? PANEL_LIGHT : PANEL, 18);
-        if (selected) shape.setStroke(dp(2), PURPLE);
+        if (selected) shape.setStroke(dp(2), accentColor);
         card.setBackground(shape);
     }
 
@@ -797,7 +1013,7 @@ public final class MainActivity extends Activity {
         if (fullScreen) { setFullScreen(false); return; }
         if (episodeSelectionMode || downloadSelectionMode) { exitListSelection(); return; }
         if (downloadsPage && downloadGroupId != null) { downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0); return; }
-        if (player != null || playerPanel.getVisibility() == View.VISIBLE || seriesPage || downloadsPage) { renderLibrary(); return; }
+        if (player != null || playerPanel.getVisibility() == View.VISIBLE || seriesPage || downloadsPage || settingsPage) { renderLibrary(); return; }
         super.onBackPressed();
     }
 
@@ -840,6 +1056,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openDownloads() {
+        dismissLibraryKeyboard(); settingsPage = false;
         clearListSelection();
         closePlayback();
         downloadGroupId = null;
@@ -857,7 +1074,7 @@ public final class MainActivity extends Activity {
 
     private void renderDownloads() {
         if (episodeSelectionMode) clearListSelection();
-        downloadsPage = true; seriesPage = false; lastRender = System.currentTimeMillis();
+        settingsPage = false; downloadsPage = true; seriesPage = false; lastRender = System.currentTimeMillis();
         int previousScroll = scroll.getScrollY();
         content.removeAllViews();
         List<MediaRepository.OfflineItem> entries = media.downloads();
@@ -1226,7 +1443,7 @@ public final class MainActivity extends Activity {
     }
     private void empty(String heading, String description, String action, Runnable callback) {
         LinearLayout box = card(); box.setPadding(dp(24), dp(36), dp(24), dp(32));
-        TextView symbol = text("▶", 36, PURPLE); symbol.setGravity(Gravity.CENTER); box.addView(symbol);
+        TextView symbol = text("▶", 36, accentColor); symbol.setGravity(Gravity.CENTER); box.addView(symbol);
         TextView name = text(heading, 20, TEXT); name.setGravity(Gravity.CENTER); name.setPadding(0, dp(18), 0, dp(12)); box.addView(name);
         TextView detail = text(description, 13, MUTED); detail.setGravity(Gravity.CENTER); detail.setLineSpacing(dp(5), 1); detail.setPadding(0, 0, 0, dp(24)); box.addView(detail);
         box.addView(button(action, true, v -> callback.run())); content.addView(box, gapLayout());
@@ -1238,7 +1455,7 @@ public final class MainActivity extends Activity {
     private Button button(String value, boolean primary, View.OnClickListener listener) {
         Button button = new Button(this); button.setText(value); button.setTextSize(12); button.setAllCaps(false);
         button.setMinWidth(0); button.setMinimumWidth(0); button.setMinHeight(dp(42)); button.setMinimumHeight(dp(42));
-        button.setTextColor(primary ? BG : TEXT); button.setBackground(background(primary ? PURPLE : PANEL_LIGHT, 11));
+        button.setTextColor(primary ? BG : TEXT); button.setBackground(background(primary ? accentColor : PANEL_LIGHT, 11));
         button.setPadding(dp(12), dp(8), dp(12), dp(8));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2); params.setMargins(dp(3), dp(3), dp(3), dp(3)); button.setLayoutParams(params);
         button.setOnClickListener(listener); return button;
