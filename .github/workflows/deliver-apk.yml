@@ -1,0 +1,60 @@
+name: Provide verified APK download
+
+on:
+  push:
+    branches: [anime-shelf-apk]
+    paths: ['.github/workflows/deliver-apk.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  deliver:
+    if: github.ref == 'refs/heads/anime-shelf-apk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: anime-shelf-apk
+      - name: Download previously verified build
+        uses: actions/download-artifact@v4
+        with:
+          name: anime-shelf-test-apk
+          run-id: 39703457406
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/anime-apk-delivery
+      - name: Verify and copy the exact delivered APK
+        env:
+          DELIVERY_INPUT: ${{ runner.temp }}/anime-apk-delivery
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from hashlib import sha256
+          import os
+          import shutil
+          candidates = list(Path(os.environ['DELIVERY_INPUT']).rglob('*.apk'))
+          assert len(candidates) == 1, 'Expected exactly one APK'
+          source = candidates[0]
+          expected = '47c844996876bb17da5a3373a7336725bdc999d4c5de938340029cf1b11b2df0'
+          assert source.stat().st_size == 4905850, 'APK size mismatch'
+          assert sha256(source.read_bytes()).hexdigest() == expected, 'APK hash mismatch'
+          target = Path('downloads/anime-shelf-0.1.1.apk')
+          target.parent.mkdir(exist_ok=True)
+          shutil.copyfile(source, target)
+          target.with_suffix('.apk.sha256').write_text(expected + '  ' + target.name + '\n')
+          print('Verified APK:', target, source.stat().st_size, 'bytes')
+          PY
+      - name: Save download on the isolated application branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- downloads/anime-shelf-0.1.1.apk downloads/anime-shelf-0.1.1.apk.sha256
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'Provide verified 0.1.1 APK for direct download [skip ci]'
+          git push origin HEAD:refs/heads/anime-shelf-apk
