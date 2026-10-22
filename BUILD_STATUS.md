@@ -1,34 +1,27 @@
 # 当前交付状态
 
-当前交付为番匣 **0.1.1 测试版**，`versionCode=2`，包名 `com.animeshelf.app`，最低 Android 8.0（API 26）。对应源码提交 `44a2e79f2e65c2d5dfcb6bf101f344df57b1b11a` 已完成 CI 构建与校验。
+当前源码为番匣 **0.1.2**，`versionCode=3`，包名 `com.animeshelf.app`，最低 Android 8.0（API 26）。本轮 CI 构建结果待记录，不能沿用上一版的通过结果。
 
-## 本次交付证据
+## 本轮问题与改动
 
-- GitHub Actions：[构建 39703457406](https://github.com/Vicissitudes123/logistics-dashboard-demo/actions/runs/39703457406)，结果成功。
-- 87 项解析断言通过；16 项 JUnit/Robolectric 测试通过，0 失败、0 跳过；Android 编译与 Lint 通过。
-- APK v2 签名验证通过，证书 SHA-256 与已交付的 0.1.0 完全一致：`0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c`。新包可覆盖安装，保留本地应用数据。
-- `anime-shelf-0.1.1.apk`：4,905,850 字节；SHA-256：`47c844996876bb17da5a3373a7336725bdc999d4c5de938340029cf1b11b2df0`。
-- 构建 artifact：`12393678189`；下载 ZIP 的 SHA-256 与 GitHub 记录一致，解压完整性通过。
+- 用户在 0.1.1 的实际截图显示：同一视频轨的三个地址均为 HTTP 403，其他集下载也被拒绝。不能由此断定 VPN、解码器或 DRM 是原因。
+- 用户补充确认：番匣的登录核验已成功，同一集可在手机浏览器网页内播放。这进一步支持比较客户端媒体请求差异，但尚不是同一签名 URL 的 UA 对照实验。
+- 此前 API 与媒体统一使用 Android Mobile UA。网页 CDN 现在使用桌面浏览器标识，并在最终请求层覆盖旧任务保存的 UA；API、登录、原签名 URL、Range 和缓存键保持原样。
+- [同类安卓客户端历史提交](https://github.com/yearzen1/bilibili-pure-apk/commit/61908e12db99acbcb2df135a100cecc4ac2e6147)记录了该兼容问题，构成本轮改动依据。尚未对用户同一条签名 URL 做设备上的 A/B 请求。
+- 首页与下载页此前只更新列表，播放器仍持续占据上半屏。现在有明确首页入口，切换页面先保存进度、释放并收起播放器，全屏和错误弹窗也可返回首页。
 
-## 已有证据
+## 验证与交付
 
-- 0.1.0 已生成并交付测试 APK，通过 60 项解析回归断言、Android 编译、Lint 和 APK 签名校验。
-- 用户实际使用 0.1.0 后反馈了登录提示、在线播放 HTTP 错误和下载失败。截图不能确定具体 HTTP 状态码，也不能单凭截图归因于 DRM、编码、会员或网络出口。
-- 源码确认存在备用地址丢失、媒体请求头未统一、登录完成未验证 API 会话及错误细节不足等问题。
+- 本地解析回归：92 项断言通过。
+- JUnit/Robolectric：包含旧下载记录 UA 恢复、请求范围与缓存键、诊断及首页导航回归，待本轮 CI 记录结果。
+- 只读公开流请求对照仅记录 HTTP 状态、主机及读取字节数。API 被拒绝或无法取得媒体时，结果标为无法得出结论；不使用用户账号。
+- CI 完成测试、编译、Lint 和签名验证后，在独立 `anime-shelf-apk` 分支写入已验证 APK 及校验文件，提供浏览器直接下载入口。
+- 继续使用 `anime-shelf-debug-signing-v2` 缓存密钥；必须实际核对签名证书 SHA-256 为 `0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c`，才交付覆盖更新包。
 
-## 本轮修复与验证
+## 既有版本
 
-- 0.1.1 保留并尝试接口提供的备用媒体地址，保持 Range、缓存键和请求语义，统一 User-Agent 与 Referer。
-- 登录完成时验证当前 API 会话；网页 App 唤起提示与真实登录状态分别处理。
-- 播放与下载失败显示可取得的 HTTP 状态、音画轨和主机，不暴露 Cookie、完整签名链接或服务器响应正文。
-- CI 执行解析回归测试、JUnit/Robolectric 单元测试、Android 编译、Lint 和签名校验；单元测试使用合成响应及模拟数据源，不访问用户账号或实际 CDN。
-- artifact 包含 APK、包信息、`apk-signature.txt` 证书报告、单元测试结果和 Lint 报告。
-- 继续使用 `anime-shelf-debug-signing-v2` 缓存签名密钥；本轮已实际对比新旧 APK 证书 SHA-256，确认一致。
+0.1.1 源码提交 `44a2e79f2e65c2d5dfcb6bf101f344df57b1b11a` 在[构建 39703457406](https://github.com/Vicissitudes123/logistics-dashboard-demo/actions/runs/39703457406)通过 87 项解析断言、16 项单元测试、编译、Lint 和签名校验。用户真机随后确认该版仍发生 403，因此这些通过结果不等于视频可用。
 
-**尚未确认：**用户设备上先前失败的实际根因，以及 0.1.1 在该账号、视频和网络环境下是否能成功播放或下载。截图中的《JOJO》具体番剧仍需实测。自动化通过不等于已完成真机验证。
+## 设备验证边界
 
-## 构建环境
-
-经用户授权，使用 GitHub Actions 在独立 `anime-shelf-apk` 分支构建，原仓库 main 分支保持不变。当前是开发签名的测试版，尚未作为生产发行版验证。
-
-源码不包含二进制 Gradle wrapper JAR。`gradlew` 可调用本机已安装的 Gradle 8.9；也可以先用 `gradle wrapper --gradle-version 8.9` 生成完整 wrapper。需要 Android SDK 35 和 JDK 17 或以上。
+当前仍需用户复测该账号、JOJO 剧集和手机网络中的播放、下载及首页导航。未宣称所有 HTTP 403 已消失。原仓库 main 分支保持不变。

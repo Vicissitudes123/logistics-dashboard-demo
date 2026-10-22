@@ -37,8 +37,12 @@ public final class BiliClient {
         private ClientException(String message) { super(message); }
     }
 
+    /** Preserve the existing API/login identity independently of the media request policy. */
     public static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
+    /** Web playurl responses produce PC media URLs; their CDN requests use a desktop browser. */
+    public static final String MEDIA_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            + "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
     public static final String REFERER = "https://www.bilibili.com/";
     private static final int MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
     private static final Pattern SHARE_URL = Pattern.compile("https?://[^\\s<>\\\"'，。；）】]+", Pattern.CASE_INSENSITIVE);
@@ -503,7 +507,7 @@ public final class BiliClient {
     }
 
     private static void addMediaHeaders(Quality quality) {
-        quality.headers.put("User-Agent", USER_AGENT);
+        quality.headers.put("User-Agent", MEDIA_USER_AGENT);
         quality.headers.put("Referer", REFERER);
     }
 

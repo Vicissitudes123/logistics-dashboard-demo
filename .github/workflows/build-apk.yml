@@ -12,10 +12,21 @@ on:
 permissions:
   contents: read
 
+env:
+  EXPECTED_APK_VERSION: '0.1.2'
+  EXPECTED_APK_VERSION_CODE: '3'
+  EXPECTED_APK_CERTIFICATE_SHA256: '0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c'
+
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    outputs:
+      apk_sha256: ${{ steps.apk_metadata.outputs.sha256 }}
+      apk_size: ${{ steps.apk_metadata.outputs.size }}
+      apk_version: ${{ steps.apk_metadata.outputs.version }}
+      apk_version_code: ${{ steps.apk_metadata.outputs.version_code }}
+      apk_certificate_sha256: ${{ steps.apk_metadata.outputs.certificate_sha256 }}
     env:
       ANIME_DEBUG_KEYSTORE: ${{ github.workspace }}/.ci-signing/debug.keystore
     steps:
@@ -51,6 +62,13 @@ jobs:
           curl --fail --location --retry 3 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o build/parser-test/json.jar
           javac --release 17 -cp build/parser-test/json.jar -d build/parser-test app/src/main/java/com/animeshelf/app/Models.java app/src/main/java/com/animeshelf/app/BiliClient.java tests/ParserSelfTest.java
           java -cp build/parser-test:build/parser-test/json.jar com.animeshelf.app.ParserSelfTest
+      - name: Probe public media request behavior
+        continue-on-error: true
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p app/build/reports
+          python3 tests/probe_media_request.py 2>&1 | tee app/build/reports/network-probe.txt
       - name: Test, build and lint
         run: gradle :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon
       - name: Verify APK signature
@@ -58,6 +76,37 @@ jobs:
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk | tee app/build/outputs/apk/debug/apk-signature.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/apk-info.txt
+      - name: Record verified APK identity
+        id: apk_metadata
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re
+          folder = pathlib.Path('app/build/outputs/apk/debug')
+          apk = folder / 'app-debug.apk'
+          info = (folder / 'apk-info.txt').read_text()
+          signature = (folder / 'apk-signature.txt').read_text()
+          def required(pattern, text):
+              match = re.search(pattern, text)
+              if not match:
+                  raise SystemExit('Missing verified APK metadata: ' + pattern)
+              return match.group(1)
+          package = required(r"package: name='([^']+)'", info)
+          version = required(r"versionName='([^']+)'", info)
+          version_code = required(r"versionCode='([^']+)'", info)
+          certificate = required(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)', signature).lower()
+          signer_count = required(r'Number of signers: (\d+)', signature)
+          if (signer_count != '1' or package != 'com.animeshelf.app' or version != os.environ['EXPECTED_APK_VERSION']
+                  or version_code != os.environ['EXPECTED_APK_VERSION_CODE']
+                  or certificate != os.environ['EXPECTED_APK_CERTIFICATE_SHA256']):
+              raise SystemExit('APK package, version or signing certificate does not match the expected release')
+          values = {'sha256': hashlib.sha256(apk.read_bytes()).hexdigest(), 'size': str(apk.stat().st_size),
+                    'version': version, 'version_code': version_code, 'certificate_sha256': certificate}
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key, value in values.items():
+                  output.write(f'{key}={value}\n')
+          print(values)
+          PY
       - name: Upload APK and validation reports
         uses: actions/upload-artifact@v4
         with:
@@ -67,6 +116,102 @@ jobs:
             app/build/outputs/apk/debug/apk-info.txt
             app/build/outputs/apk/debug/apk-signature.txt
             app/build/reports/lint-results-debug.html
+            app/build/reports/network-probe.txt
             app/build/reports/tests/testDebugUnitTest/
             app/build/test-results/testDebugUnitTest/*.xml
           if-no-files-found: error
+
+  deliver:
+    name: Publish verified APK download
+    needs: build
+    if: github.ref == 'refs/heads/anime-shelf-apk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: anime-shelf-apk-delivery
+      cancel-in-progress: false
+    env:
+      BUILD_SOURCE_SHA: ${{ github.sha }}
+      BUILD_APK_SHA256: ${{ needs.build.outputs.apk_sha256 }}
+      BUILD_APK_SIZE: ${{ needs.build.outputs.apk_size }}
+      BUILD_APK_VERSION: ${{ needs.build.outputs.apk_version }}
+      BUILD_APK_VERSION_CODE: ${{ needs.build.outputs.apk_version_code }}
+      BUILD_APK_CERTIFICATE_SHA256: ${{ needs.build.outputs.apk_certificate_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: anime-shelf-apk
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: anime-shelf-test-apk
+          path: verified-build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
+      - name: Install APK verification tools
+        run: sdkmanager 'build-tools;35.0.0'
+      - name: Verify downloaded APK and write public download files
+        shell: bash
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs verified-build/outputs/apk/debug/app-debug.apk > verified-build/apk-signature-checked.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging verified-build/outputs/apk/debug/app-debug.apk > verified-build/apk-info-checked.txt
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re, shutil
+          folder = pathlib.Path('verified-build')
+          apk = folder / 'outputs/apk/debug/app-debug.apk'
+          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+          size = str(apk.stat().st_size)
+          if digest != os.environ['BUILD_APK_SHA256'] or size != os.environ['BUILD_APK_SIZE']:
+              raise SystemExit('Downloaded APK bytes do not match the build job output')
+          info = (folder / 'apk-info-checked.txt').read_text()
+          signature = (folder / 'apk-signature-checked.txt').read_text()
+          def required(pattern, text):
+              match = re.search(pattern, text)
+              if not match:
+                  raise SystemExit('Missing verified APK metadata: ' + pattern)
+              return match.group(1)
+          package = required(r"package: name='([^']+)'", info)
+          version = required(r"versionName='([^']+)'", info)
+          code = required(r"versionCode='([^']+)'", info)
+          certificate = required(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)', signature).lower()
+          signer_count = required(r'Number of signers: (\d+)', signature)
+          if (signer_count != '1' or package != 'com.animeshelf.app'
+                  or version != os.environ['EXPECTED_APK_VERSION'] or version != os.environ['BUILD_APK_VERSION']
+                  or code != os.environ['EXPECTED_APK_VERSION_CODE'] or code != os.environ['BUILD_APK_VERSION_CODE']
+                  or certificate != os.environ['EXPECTED_APK_CERTIFICATE_SHA256']
+                  or certificate != os.environ['BUILD_APK_CERTIFICATE_SHA256']):
+              raise SystemExit('Downloaded APK identity or certificate does not match the verified build')
+          target = pathlib.Path('downloads') / f'anime-shelf-{version}.apk'
+          target.parent.mkdir(exist_ok=True)
+          shutil.copyfile(apk, target)
+          target.with_suffix('.apk.sha256').write_text(f'{digest}  {target.name}\n')
+          print(f'Verified {target}: {size} bytes, SHA-256 {digest}, certificate {certificate}')
+          PY
+      - name: Commit only the verified APK and checksum
+        shell: bash
+        run: |
+          git merge-base --is-ancestor "$BUILD_SOURCE_SHA" HEAD
+          git diff --exit-code "$BUILD_SOURCE_SHA" HEAD -- . ':(exclude)downloads/**'
+          git add -- downloads/anime-shelf-0.1.2.apk downloads/anime-shelf-0.1.2.apk.sha256
+          if git diff --cached --quiet; then
+            echo 'The verified APK download is already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Publish verified Anime Shelf 0.1.2 APK [skip ci]'
+          git push origin HEAD:anime-shelf-apk
+      - name: Report direct download
+        shell: bash
+        run: |
+          echo 'APK: https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.2.apk' >> "$GITHUB_STEP_SUMMARY"
+          echo "SHA-256: $BUILD_APK_SHA256" >> "$GITHUB_STEP_SUMMARY"

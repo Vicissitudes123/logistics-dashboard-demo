@@ -67,7 +67,8 @@ public final class MainActivity extends Activity {
     private LinearLayout root, header, body, nav, playerPanel, playerTools, content;
     private FrameLayout videoFrame;
     private ScrollView scroll;
-    private TextView status, nowTitle, nowSubtitle, speedLabel;
+    private TextView status, nowTitle, nowSubtitle, speedLabel, tagline;
+    private Button loginButton, addButton;
     private PlayerView playerView;
     private ExoPlayer player;
     private Store store;
@@ -105,24 +106,34 @@ public final class MainActivity extends Activity {
         root = column(); root.setBackgroundColor(BG);
         setContentView(root);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(fullScreen ? 0 : insets.getSystemWindowInsetLeft(),
-                fullScreen ? 0 : insets.getSystemWindowInsetTop(),
-                fullScreen ? 0 : insets.getSystemWindowInsetRight(),
-                fullScreen ? 0 : insets.getSystemWindowInsetBottom());
+            int left = fullScreen ? 0 : insets.getSystemWindowInsetLeft();
+            int top = fullScreen ? 0 : insets.getSystemWindowInsetTop();
+            int right = fullScreen ? 0 : insets.getSystemWindowInsetRight();
+            int bottom = fullScreen ? 0 : insets.getSystemWindowInsetBottom();
+            if (fullScreen && Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
+                android.view.DisplayCutout cutout = insets.getDisplayCutout();
+                left = cutout.getSafeInsetLeft(); top = cutout.getSafeInsetTop();
+                right = cutout.getSafeInsetRight(); bottom = cutout.getSafeInsetBottom();
+            }
+            view.setPadding(left, top, right, bottom);
             return insets;
         });
         root.requestApplyInsets();
         header = column(); header.setPadding(dp(20), dp(18), dp(20), dp(12));
         LinearLayout brand = row();
+        brand.addView(button("首页", false, v -> renderLibrary()));
         TextView name = text("番匣", 29, TEXT); name.setTypeface(null, Typeface.BOLD);
         brand.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        brand.addView(button("B站登录", false, v -> {
+        loginButton = button("B站登录", false, v -> {
             ++selectionToken;
             startActivity(new Intent(this, LoginActivity.class));
-        }));
-        brand.addView(button("＋ 添加", true, v -> addMenu()));
+        });
+        brand.addView(loginButton);
+        addButton = button("＋ 添加", true, v -> addMenu());
+        brand.addView(addButton);
         header.addView(brand);
-        header.addView(text("把喜欢的故事，带在身边", 12, MUTED));
+        tagline = text("把喜欢的故事，带在身边", 12, MUTED);
+        header.addView(tagline);
         root.addView(header);
 
         playerPanel = column(); playerPanel.setVisibility(View.GONE);
@@ -161,9 +172,10 @@ public final class MainActivity extends Activity {
         content = column(); content.setPadding(dp(20), dp(10), dp(20), dp(20));
         scroll.addView(content); body.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         nav = row(); nav.setPadding(dp(12), dp(6), dp(12), dp(10)); nav.setBackgroundColor(PANEL);
-        addEqual(nav, button("番剧库", false, v -> { downloadsPage = false; renderLibrary(); }));
-        addEqual(nav, button("离线下载", false, v -> { ++selectionToken; downloadsPage = true; renderDownloads(); }));
-        body.addView(nav);
+        addEqual(nav, button("首页 · 番剧库", false, v -> renderLibrary()));
+        addEqual(nav, button("离线下载", false, v -> openDownloads()));
+        // Keep navigation outside the shrinking list area below the player.
+        root.addView(nav);
     }
 
     private void addMenu() {
@@ -184,8 +196,9 @@ public final class MainActivity extends Activity {
             String value = input.getText().toString().trim();
             if (value.isEmpty()) { input.setError("请先粘贴链接"); return; }
             dialog.dismiss();
+            final int token = ++selectionToken;
             String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
-            runTask("正在读取剧集…", () -> new BiliClient(cookie).resolve(value), series -> {
+            runTask("正在读取剧集…", token, () -> new BiliClient(cookie).resolve(value), series -> {
                 store.saveSeries(series);
                 currentSeries = series; downloadsPage = false;
                 renderSeries(series);
@@ -196,8 +209,10 @@ public final class MainActivity extends Activity {
     }
 
     private void renderLibrary() {
-        ++selectionToken;
+        closePlayback();
+        currentSeries = null;
         downloadsPage = false; seriesPage = false; content.removeAllViews();
+        scroll.scrollTo(0, 0);
         title("我的番剧", "剧集、离线文件和观看记录，都保存在这台设备");
         List<Models.Series> series = store.listSeries();
         if (series.isEmpty()) {
@@ -227,9 +242,16 @@ public final class MainActivity extends Activity {
     }
 
     private void renderSeries(Models.Series series) {
+        closePlayback();
+        renderSeriesContent(series);
+        scroll.scrollTo(0, 0);
+    }
+
+    /** Render the episode list belonging to the active playback without closing it. */
+    private void renderSeriesContent(Models.Series series) {
         ++selectionToken;
         downloadsPage = false; seriesPage = true; currentSeries = series; content.removeAllViews();
-        content.addView(button("‹  返回番剧库", false, v -> renderLibrary()));
+        content.addView(button("‹  回到首页", false, v -> renderLibrary()));
         title(series.title, series.episodes.size() + " 集  ·  点击剧集选择播放或下载");
         String lastId = store.getLastEpisode(series.id);
         Models.Episode resume = findEpisode(series, lastId);
@@ -322,7 +344,7 @@ public final class MainActivity extends Activity {
         if (resumeOverrideMs < 0 && progress.durationMs > 0 && resume >= progress.durationMs - 2000) resume = 0;
         requestedResumeMs = Math.max(0, resume);
         Models.Series found = findSeries(episode.seriesId);
-        if (found != null) currentSeries = found;
+        currentSeries = found;
         try {
             ExoPlayer next = new ExoPlayer.Builder(this).build(); player = next;
             playerView.setPlayer(next);
@@ -353,7 +375,13 @@ public final class MainActivity extends Activity {
             nowTitle.setText(episode.seriesTitle + " · 第 " + episode.index + " 集");
             nowSubtitle.setText(episode.title + "  ·  " + (quality == null ? "本地文件" : quality.label + (offline ? " · 离线" : " · 在线")));
             resizeVideo();
-            if (!downloadsPage && currentSeries != null) renderSeries(currentSeries);
+            downloadsPage = false;
+            if (currentSeries != null) renderSeriesContent(currentSeries);
+            else {
+                seriesPage = true;
+                content.removeAllViews();
+                title("正在播放", "点击上方「首页」可保存进度并返回番剧库");
+            }
         } catch (Exception e) { showPlaybackFailure(e); }
     }
 
@@ -378,7 +406,7 @@ public final class MainActivity extends Activity {
             (failedEpisode.localUri == null || failedEpisode.localUri.isEmpty());
         AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle("播放未能继续")
             .setMessage(diagnostic + (canRefresh ? "\n\n可以刷新当前清晰度的播放地址，重试时会保留观看位置。" : ""))
-            .setNegativeButton("关闭", null)
+            .setNegativeButton("回到首页", (d, w) -> renderLibrary())
             .setNeutralButton("复制诊断", (d, w) -> copyDiagnostic(diagnostic));
         if (canRefresh) dialog.setPositiveButton("刷新地址重试", (d, w) ->
             refreshPlayback(failedEpisode, failedQuality, failedPlayer, retryPosition));
@@ -408,6 +436,32 @@ public final class MainActivity extends Activity {
         long duration = player.getDuration();
         if (duration < 0) duration = store.getProgress(currentEpisode.id).durationMs;
         store.saveProgress(currentEpisode, Math.max(0, player.getCurrentPosition()), Math.max(0, duration));
+    }
+
+    private void closePlayback() {
+        ++selectionToken;
+        ++taskStatusToken;
+        status.setVisibility(View.GONE);
+        // A failed source can already be IDLE. Preserve its real position if it
+        // reached READY; a source that never loaded must not overwrite history.
+        if (player != null && currentEpisode != null && sourceReady) {
+            long duration = player.getDuration();
+            if (duration <= 0) duration = store.getProgress(currentEpisode.id).durationMs;
+            store.saveProgress(currentEpisode, Math.max(0, player.getCurrentPosition()), Math.max(0, duration));
+        }
+        ExoPlayer previous = player;
+        player = null;
+        sourceReady = false;
+        playerView.setPlayer(null);
+        if (previous != null) previous.release();
+        currentEpisode = null;
+        currentQuality = null;
+        currentSeries = null;
+        currentOffline = false;
+        requestedResumeMs = 0;
+        if (fullScreen) setFullScreen(false);
+        playerPanel.setVisibility(View.GONE);
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
     private void adjacent(int direction) {
@@ -440,7 +494,14 @@ public final class MainActivity extends Activity {
 
     private void setFullScreen(boolean value) {
         fullScreen = value;
-        header.setVisibility(value ? View.GONE : View.VISIBLE); body.setVisibility(value ? View.GONE : View.VISIBLE);
+        // Home remains reachable even when playback failed in full screen.
+        header.setVisibility(View.VISIBLE);
+        header.setPadding(dp(20), dp(value ? 4 : 18), dp(20), dp(value ? 4 : 12));
+        tagline.setVisibility(value ? View.GONE : View.VISIBLE);
+        loginButton.setVisibility(value ? View.GONE : View.VISIBLE);
+        addButton.setVisibility(value ? View.GONE : View.VISIBLE);
+        body.setVisibility(value ? View.GONE : View.VISIBLE);
+        nav.setVisibility(value ? View.GONE : View.VISIBLE);
         nowTitle.setVisibility(value ? View.GONE : View.VISIBLE); nowSubtitle.setVisibility(value ? View.GONE : View.VISIBLE);
         if (value) {
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
@@ -455,7 +516,7 @@ public final class MainActivity extends Activity {
 
     private void resizeVideo() {
         if (fullScreen) {
-            playerPanel.setLayoutParams(new LinearLayout.LayoutParams(-1, -1));
+            playerPanel.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1));
             videoFrame.setLayoutParams(new LinearLayout.LayoutParams(-1, 0, 1));
         } else {
             playerPanel.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
@@ -468,7 +529,7 @@ public final class MainActivity extends Activity {
     @Override public void onConfigurationChanged(Configuration configuration) { super.onConfigurationChanged(configuration); resizeVideo(); }
     @Override public void onBackPressed() {
         if (fullScreen) { setFullScreen(false); return; }
-        if (seriesPage || downloadsPage) { renderLibrary(); return; }
+        if (player != null || playerPanel.getVisibility() == View.VISIBLE || seriesPage || downloadsPage) { renderLibrary(); return; }
         super.onBackPressed();
     }
 
@@ -510,6 +571,12 @@ public final class MainActivity extends Activity {
         return "本地视频";
     }
 
+    private void openDownloads() {
+        closePlayback();
+        renderDownloads();
+        scroll.scrollTo(0, 0);
+    }
+
     private void renderDownloads() {
         downloadsPage = true; seriesPage = false; lastRender = System.currentTimeMillis(); content.removeAllViews();
         title("离线下载", "完整下载后，即可在无网络时播放");
@@ -535,7 +602,9 @@ public final class MainActivity extends Activity {
             else if (entry.failed) addEqual(actions, button("重新解析重试", true, v -> {
                 String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
                 runTask("正在刷新下载地址…", () -> new BiliClient(cookie).refresh(entry.episode, entry.quality.id), quality -> {
-                    media.enqueue(entry.episode, quality); media.resumeAll(); renderDownloads(); notice("已重新加入下载队列");
+                    media.enqueue(entry.episode, quality); media.resumeAll();
+                    if (downloadsPage) renderDownloads();
+                    notice("已重新加入下载队列");
                 });
             }));
             else addEqual(actions, button(entry.paused ? "继续全部" : "暂停全部", false, v -> {

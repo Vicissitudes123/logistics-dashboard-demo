@@ -83,7 +83,7 @@ public final class MediaRepository {
     }
     private void registerTrack(String id, List<String> urls, Map<String, String> qualityHeaders, String label) {
         Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", BiliClient.USER_AGENT);
+        headers.put("User-Agent", BiliClient.MEDIA_USER_AGENT);
         headers.put("Referer", BiliClient.REFERER);
         headers.put("Origin", "https://www.bilibili.com");
         if (qualityHeaders != null) headers.putAll(qualityHeaders);

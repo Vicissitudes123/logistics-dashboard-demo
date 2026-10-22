@@ -127,11 +127,16 @@ public final class ParserSelfTest {
         check(quality.videoUrls.get(6).contains("repeated-track.example"), "Repeated stream source preserved");
         check(quality.videoUrls.stream().noneMatch(url -> url.contains("different-resource.m4s")), "Same quality ID with a different resource path cannot enter the same cached track");
         check(quality.audioUrls.size() == 2 && quality.audioUrl.contains("audio-one.example"), "Backup-only audio is a usable track");
-        check(quality.headers.get("User-Agent").equals(BiliClient.USER_AGENT)
-                && quality.headers.get("Referer").equals(BiliClient.REFERER), "API and media use shared request identity");
+        check(quality.headers.get("User-Agent").equals(BiliClient.MEDIA_USER_AGENT)
+                && quality.headers.get("Referer").equals(BiliClient.REFERER), "Web media uses desktop identity with the unchanged Referer");
+        check(BiliClient.MEDIA_USER_AGENT.contains("Windows NT") && !BiliClient.MEDIA_USER_AGENT.contains("Android")
+                && !BiliClient.MEDIA_USER_AGENT.contains("Mobile"), "PC media UA contains no Android or Mobile marker");
+        check(BiliClient.USER_AGENT.contains("Android") && BiliClient.USER_AGENT.contains("Mobile")
+                && !BiliClient.USER_AGENT.equals(BiliClient.MEDIA_USER_AGENT), "Existing API and login identity remains unchanged");
         Quality loaded = Quality.fromJson(new JSONObject(quality.toJson().toString()));
         check(loaded.videoUrls.equals(quality.videoUrls) && loaded.audioUrls.equals(quality.audioUrls), "Every CDN candidate persists across process recreation");
         check(loaded.videoUrl.equals(quality.videoUrl) && loaded.audioUrl.equals(quality.audioUrl), "Legacy primary URL fields remain consistent");
+        check(loaded.headers.get("User-Agent").equals(BiliClient.MEDIA_USER_AGENT), "New persisted downloads carry the desktop media identity");
         Quality legacy = Quality.fromJson(json("{\"videoUrl\":\"https://legacy.example/video\",\"audioUrl\":\"https://legacy.example/audio\"}"));
         check(legacy.videoUrls.size() == 1 && legacy.audioUrls.size() == 1, "Old stored single-URL downloads gain candidates");
         Quality arraysOnly = Quality.fromJson(json("{\"videoUrls\":[\"file:///invalid\",\"https://backup.example/video\",\"https://backup.example/video\"]}"));
@@ -181,6 +186,7 @@ public final class ParserSelfTest {
         java.net.HttpURLConnection shortLink = (java.net.HttpURLConnection) invoke(open, authenticated, trusted("https://b23.tv/test"));
         // Opening a URLConnection object does not contact the network until connect/read.
         check("SESSDATA=test-fixture".equals(bili.getRequestProperty("Cookie")), "Session attached only to Bilibili API");
+        check(BiliClient.USER_AGENT.equals(bili.getRequestProperty("User-Agent")), "API HTTP requests still send the original API UA");
         check(shortLink.getRequestProperty("Cookie") == null, "B23 requests never receive login cookies");
         check(!shortLink.getInstanceFollowRedirects(), "Redirects require explicit trusted-host checking");
         bili.disconnect();
@@ -225,6 +231,8 @@ public final class ParserSelfTest {
         Quality restored = Quality.fromJson(serialized);
         check(restored.id.equals(quality.id) && restored.qn == 80 && restored.audioUrl.equals(quality.audioUrl), "Quality identity and both track URLs round trip");
         check(restored.headers.size() == 2, "Only public media headers restored");
+        check(restored.headers.get("User-Agent").equals(BiliClient.USER_AGENT)
+                && !restored.headers.get("User-Agent").equals(BiliClient.MEDIA_USER_AGENT), "Legacy mobile-UA records still load; transport must override their stale media UA");
         serialized.getJSONObject("headers").put("Cookie", "injected");
         check(!Quality.fromJson(serialized).headers.containsKey("Cookie"), "Legacy/injected cookies are not loaded from storage");
     }

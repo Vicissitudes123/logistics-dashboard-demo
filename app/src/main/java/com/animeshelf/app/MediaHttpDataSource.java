@@ -44,8 +44,8 @@ public final class MediaHttpDataSource implements DataSource {
         private final DataSource.Factory upstreamFactory;
 
         public Factory(Resolver resolver) {
-            // A Factory user agent overrides DataSpec headers in DefaultHttpDataSource.
-            // Supply it in sanitized request headers instead, so Quality headers take effect.
+            // Keep the media identity in the sanitized headers used by every attempt,
+            // including restored downloads whose stored Quality still has the old mobile UA.
             this(resolver, new DefaultHttpDataSource.Factory()
                 .setConnectTimeoutMs(20000).setReadTimeoutMs(30000));
         }
@@ -184,10 +184,13 @@ public final class MediaHttpDataSource implements DataSource {
     private static Map<String, String> headers(Map<String, String> qualityHeaders,
                                                Map<String, String> dataSpecHeaders) {
         Map<String, String> result = new LinkedHashMap<>();
-        result.put("User-Agent", BiliClient.USER_AGENT);
         result.put("Referer", BiliClient.REFERER);
         copyAllowedHeaders(qualityHeaders, result);
         copyAllowedHeaders(dataSpecHeaders, result);
+        // Web playurl may return platform=pc CDN URLs. Mobile Android browser UAs can
+        // be rejected for those URLs, even when the API request succeeded. Do not let
+        // a persisted pre-update Quality or a caller's DataSpec restore that mismatch.
+        result.put("User-Agent", BiliClient.MEDIA_USER_AGENT);
         return result;
     }
 
@@ -198,8 +201,7 @@ public final class MediaHttpDataSource implements DataSource {
                 || value.indexOf('\r') >= 0 || value.indexOf('\n') >= 0) continue;
             // This allowlist also excludes cookies, authorization and proxy credentials supplied
             // through DataSpec. DefaultHttpDataSource derives Range from DataSpec position/length.
-            if (name.equalsIgnoreCase("User-Agent")) target.put("User-Agent", value);
-            else if (name.equalsIgnoreCase("Referer")) target.put("Referer", value);
+            if (name.equalsIgnoreCase("Referer")) target.put("Referer", value);
             else if (name.equalsIgnoreCase("Origin")) target.put("Origin", value);
         }
     }

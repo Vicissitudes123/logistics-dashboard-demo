@@ -16,6 +16,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -63,7 +64,7 @@ public class MediaHttpDataSourceTest {
             assertArrayEquals(body, attempt.spec.httpBody);
             assertEquals(request.flags, attempt.spec.flags);
             assertSame(customData, attempt.spec.customData);
-            assertEquals("quality-specific-agent", attempt.spec.httpRequestHeaders.get("User-Agent"));
+            assertEquals(BiliClient.MEDIA_USER_AGENT, attempt.spec.httpRequestHeaders.get("User-Agent"));
             assertEquals(qualityHeaders.get("referer"), attempt.spec.httpRequestHeaders.get("Referer"));
             assertEquals("https://www.bilibili.com", attempt.spec.httpRequestHeaders.get("Origin"));
             assertEquals(3, attempt.spec.httpRequestHeaders.size());
@@ -142,9 +143,43 @@ public class MediaHttpDataSourceTest {
             .setHttpRequestHeaders(Collections.singletonMap("Authorization", "Bearer account_secret")).build();
         source.open(request);
         assertEquals(Uri.parse(PRIMARY), original.spec.uri);
-        assertEquals(BiliClient.USER_AGENT, original.spec.httpRequestHeaders.get("User-Agent"));
+        assertEquals(BiliClient.MEDIA_USER_AGENT, original.spec.httpRequestHeaders.get("User-Agent"));
         assertEquals(BiliClient.REFERER, original.spec.httpRequestHeaders.get("Referer"));
         assertEquals(2, original.spec.httpRequestHeaders.size());
+        source.close();
+    }
+
+    @Test public void restoredLegacyDownloadAndDataSpecCannotRestoreMobileMediaUserAgent() throws Exception {
+        JSONObject legacyRecord = new JSONObject()
+            .put("id", "80-avc").put("label", "1080P AVC").put("qn", 80)
+            .put("videoUrl", PRIMARY)
+            .put("headers", new JSONObject()
+                .put("user-agent", BiliClient.USER_AGENT)
+                .put("Referer", "https://www.bilibili.com/bangumi/play/ep1")
+                .put("Cookie", "SESSDATA=account_secret"));
+        Models.Quality restored = Models.Quality.fromJson(
+            new JSONObject(Models.Quality.fromJson(legacyRecord).toJson().toString()));
+        // The old persisted value is still present, so this verifies the final transport policy.
+        assertEquals(BiliClient.USER_AGENT, restored.headers.get("user-agent"));
+        FakeDataSource original = new FakeDataSource(0);
+        MediaHttpDataSource source = new MediaHttpDataSource(spec -> new MediaHttpDataSource.Request(
+            restored.videoCandidates(), restored.headers, "视频"), new FakeFactory(original));
+        Map<String, String> staleDataSpecHeaders = new LinkedHashMap<>();
+        staleDataSpecHeaders.put("USER-AGENT", BiliClient.USER_AGENT);
+        staleDataSpecHeaders.put("Cookie", "SESSDATA=another_account_secret");
+        source.open(new DataSpec.Builder().setUri(restored.videoUrl).setPosition(2048).setLength(512)
+            .setKey("saved-download:v").setHttpRequestHeaders(staleDataSpecHeaders).build());
+
+        assertEquals(BiliClient.MEDIA_USER_AGENT, original.spec.httpRequestHeaders.get("User-Agent"));
+        assertFalse(original.spec.httpRequestHeaders.get("User-Agent").contains("Android"));
+        assertFalse(original.spec.httpRequestHeaders.get("User-Agent").contains("Mobile"));
+        assertEquals("https://www.bilibili.com/bangumi/play/ep1", original.spec.httpRequestHeaders.get("Referer"));
+        assertEquals(2, original.spec.httpRequestHeaders.size());
+        assertFalse(original.spec.httpRequestHeaders.toString().contains("account_secret"));
+        assertEquals(Uri.parse(PRIMARY), original.spec.uri);
+        assertEquals(2048, original.spec.position);
+        assertEquals(512, original.spec.length);
+        assertEquals("saved-download:v", original.spec.key);
         source.close();
     }
 
