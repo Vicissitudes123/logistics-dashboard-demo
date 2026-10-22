@@ -2,9 +2,9 @@
 
 原生安卓测试版，Android 8.0（API 26）及以上。中文界面，视频、账号会话和观看记录保存在设备本地，不需要部署服务器。
 
-[下载 0.1.4 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/6b08644939175c1a3cfd1e404c83cf95235f49b6/downloads/anime-shelf-0.1.4-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/6b08644939175c1a3cfd1e404c83cf95235f49b6/downloads/anime-shelf-0.1.4.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
+[下载 0.1.5 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/89b148bdd4d7e237a3011c55f5e56170c5cc1e39/downloads/anime-shelf-0.1.5-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/89b148bdd4d7e237a3011c55f5e56170c5cc1e39/downloads/anime-shelf-0.1.5.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
 
-**0.1.5 正在构建验证。** 用户已安装 0.1.4；本轮按新的操作偏好改为左侧亮度与长按临时倍速，去掉播放器按钮底色，加入列表长按多选。上方暂保留已交付的 0.1.4 下载，验证状态见 `BUILD_STATUS.md`。
+**当前交付为 0.1.5。** 本轮按新的操作偏好改为左侧亮度与长按临时倍速，去掉播放器按钮底色，加入列表长按多选。构建与测试全部通过，手机手势体验仍需安装后验证；详情见 `BUILD_STATUS.md`。
 
 ## 使用
 
