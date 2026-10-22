@@ -26,7 +26,7 @@ import org.robolectric.annotation.LooperMode;
 
 /** Real touch dispatch must distinguish picture gestures from interactive controls. */
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = 28, manifest = Config.NONE, qualifiers = "mdpi")
+@Config(sdk = 28, manifest = Config.NONE, qualifiers = "w640dp-h360dp-land-mdpi")
 @LooperMode(LooperMode.Mode.PAUSED)
 public class PlayerOverlayTest {
     private ActivityController<Activity> controller;
@@ -45,8 +45,8 @@ public class PlayerOverlayTest {
         parent.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
         activity.setContentView(parent);
         overlay.setActive(true);
-        layout(640, 360);
         Shadows.shadowOf(Looper.getMainLooper()).idle();
+        layout(640, 360);
     }
 
     @After public void tearDown() {
