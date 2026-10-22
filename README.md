@@ -2,9 +2,9 @@
 
 原生安卓测试版，Android 8.0（API 26）及以上。中文界面，视频、账号会话和观看记录保存在设备本地，不需要部署服务器。
 
-[下载 0.1.5 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/89b148bdd4d7e237a3011c55f5e56170c5cc1e39/downloads/anime-shelf-0.1.5-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/89b148bdd4d7e237a3011c55f5e56170c5cc1e39/downloads/anime-shelf-0.1.5.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
+[下载 0.1.6 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/c1c2570d311b7cc8550dd6210dc413851322e9c1/downloads/anime-shelf-0.1.6-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/c1c2570d311b7cc8550dd6210dc413851322e9c1/downloads/anime-shelf-0.1.6.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
 
-**0.1.6 正在构建验证，以上链接仍为已发布的 0.1.5。** 本轮加入首页搜索、移除与恢复、置顶和设置，详情见 `BUILD_STATUS.md`。
+**当前交付为 0.1.6。** 新增首页搜索、移除与恢复、置顶和设置，默认主题为蓝色。105 项解析断言和 127 项 JUnit/Robolectric 测试通过；详情见 `BUILD_STATUS.md`。手机交互仍需安装后确认。
 
 ## 使用
 
@@ -16,7 +16,7 @@
 6. 在番剧库点「继续观看」，回到该部番最后观看的一集和保存的位置。每集进度独立保存，切集或退出时也会保存。
 7. 顶部「首页」或底部「首页 · 番剧库」返回首页，保存观看进度并收起播放器。进入下载页同样收起播放器；全屏时点击画面显示控件，可退出全屏，系统返回键先退出全屏，再返回首页。
 
-播放器支持单击显示/隐藏控制栏、双击播放/暂停、右下角切换全屏。水平滑动预览进度，松手后跳转；左半屏上下滑动调播放窗口亮度，右半屏上下滑动调媒体音量。长按画面临时 2 倍速，松手恢复长按前的速度。选集、速度和画面显示方式在视频内的控制栏中选择。
+播放器支持单击显示/隐藏控制栏、双击播放/暂停、右下角切换全屏。水平滑动预览进度，松手后跳转；左半屏上下滑动调播放窗口亮度，右半屏上下滑动调媒体音量。长按画面默认临时 2 倍速（设置可调整），松手恢复长按前的速度。选集、速度和画面显示方式在视频内的控制栏中选择。
 
 也可以多选本地视频，命名为一部番剧后播放；本地文件不能被移走或删除。
 
