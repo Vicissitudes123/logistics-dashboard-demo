@@ -122,12 +122,12 @@ public class MainLibraryTest {
         chooseDialogItem(1);
         AlertDialog confirmation = showingDialog();
         assertNotNull(card(recent.id));
-        confirmation.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
+        clickDialogButton(confirmation, AlertDialog.BUTTON_NEGATIVE);
         assertNotNull(card(recent.id));
 
         assertTrue(card(recent.id).performLongClick());
         chooseDialogItem(1);
-        showingDialog().getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+        clickDialogButton(showingDialog(), AlertDialog.BUTTON_POSITIVE);
 
         assertFalse(cardIds().contains(recent.id));
         assertEquals(1, store.listHiddenSeries().size());
@@ -166,7 +166,7 @@ public class MainLibraryTest {
         assertAccent("purple");
 
         invoke("confirmResetSettings");
-        showingDialog().getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+        clickDialogButton(showingDialog(), AlertDialog.BUTTON_POSITIVE);
 
         assertEquals("blue", new Store(activity).getThemeId());
         assertAccent("blue");
@@ -245,6 +245,14 @@ public class MainLibraryTest {
         AlertDialog dialog = showingDialog();
         assertNotNull(dialog.getListView());
         dialog.getListView().performItemClick(null, position, position);
+    }
+
+    private static void clickDialogButton(AlertDialog dialog, int which) {
+        assertNotNull(dialog.getButton(which));
+        assertTrue(dialog.getButton(which).performClick());
+        // AlertController posts button listeners and dismissal to its Handler.
+        // PAUSED loopers must deliver those messages before checking their effects.
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
     }
 
     private Object get(String name) throws Exception {
