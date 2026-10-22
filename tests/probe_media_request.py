@@ -67,20 +67,28 @@ def compare(url, sample):
     for label, user_agent in (("android_browser", MOBILE), ("desktop_browser", DESKTOP)):
         request = Request(url, headers={"User-Agent": user_agent, "Referer": REFERER,
             "Origin": "https://www.bilibili.com", "Range": "bytes=0-1023", "Accept-Encoding": "identity"})
-        status, received = None, 0
+        status, received, is_mp4 = None, 0, False
+        content_type = "unknown"
         try:
             with urlopen(request, timeout=8) as response:
                 status = response.status
-                received = len(response.read(1024))
+                payload = response.read(1024)
+                received = len(payload)
+                kind = response.headers.get_content_type()
+                content_type = kind if kind in {"video/mp4", "audio/mp4", "application/octet-stream",
+                    "video/iso.segment", "text/html", "application/json"} else "other"
+                is_mp4 = len(payload) >= 8 and payload[4:8] in {b"ftyp", b"styp", b"moof", b"sidx"}
         except HTTPError as error:
             status = error.code
             error.close()
         except (URLError, TimeoutError, OSError, ValueError):
             pass
-        statuses[label] = status
+        statuses[label] = (status, received, is_mp4)
         report(stage="media", sample=sample, host=host, user_agent=label,
-               http_status=status, bytes_read=received)
-    changed = statuses.get("android_browser") == 403 and statuses.get("desktop_browser") in (200, 206)
+               http_status=status, bytes_read=received, mp4_header=is_mp4, content_type=content_type)
+    desktop_status, desktop_bytes, desktop_mp4 = statuses["desktop_browser"]
+    changed = (statuses["android_browser"][0] == 403 and desktop_status in (200, 206)
+               and desktop_bytes > 0 and desktop_mp4)
     report(stage="comparison", sample=sample, result="desktop_resolves_403" if changed else "inconclusive")
 
 

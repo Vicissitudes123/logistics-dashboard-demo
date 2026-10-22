@@ -167,6 +167,9 @@ public class MainNavigationTest {
         assertNotNull(dialog);
         assertEquals("回到首页", dialog.getButton(AlertDialog.BUTTON_NEGATIVE).getText().toString());
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).performClick();
+        // AlertDialog dispatches button listeners through its Handler. With a
+        // paused main looper, drain that message before observing navigation.
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle();
 
         assertHome();
         assertTrue(playback.released);
