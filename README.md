@@ -2,6 +2,8 @@
 
 原生安卓测试版，Android 8.0（API 26）及以上。中文界面，视频、账号会话和观看记录保存在设备本地，不需要部署服务器。
 
+[浏览器直接下载 0.1.2 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/c999a5e8dfcae020d95246b3e187a46cceb0ac79/downloads/anime-shelf-0.1.2.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录。
+
 **当前源码为 0.1.2。** 本轮修正网页媒体请求使用手机浏览器标识的兼容性问题，并修复无法返回首页、播放器持续占据下载页的问题。用户设备已确认 0.1.1 的媒体请求返回 HTTP 403；0.1.2 是否恢复该集播放仍需真机复测。构建和验证状态见 `BUILD_STATUS.md`。
 
 ## 使用

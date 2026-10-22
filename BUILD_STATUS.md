@@ -1,6 +1,6 @@
 # 当前交付状态
 
-当前源码为番匣 **0.1.2**，`versionCode=3`，包名 `com.animeshelf.app`，最低 Android 8.0（API 26）。本轮 CI 构建结果待记录，不能沿用上一版的通过结果。
+当前交付为番匣 **0.1.2**，`versionCode=3`，包名 `com.animeshelf.app`，最低 Android 8.0（API 26）。源码提交 `ffc5315f9e5f976ab477d4e9acb6dc3bd1265bab` 已在[构建 39707232387](https://github.com/Vicissitudes123/logistics-dashboard-demo/actions/runs/39707232387)通过全部检查并完成浏览器下载交付。
 
 ## 本轮问题与改动
 
@@ -12,11 +12,18 @@
 
 ## 验证与交付
 
-- 本地解析回归：92 项断言通过。
-- JUnit/Robolectric：包含旧下载记录 UA 恢复、请求范围与缓存键、诊断及首页导航回归，待本轮 CI 记录结果。
-- 只读公开流请求对照仅记录 HTTP 状态、主机及读取字节数。API 被拒绝或无法取得媒体时，结果标为无法得出结论；不使用用户账号。
+- 本地与 CI 解析回归：92 项断言通过。
+- JUnit/Robolectric：24 项测试全部通过，0 失败、0 跳过；其中导航 7 项、媒体请求 8 项、安全诊断 9 项。编译与 Lint 通过。
+- 同一公开番剧媒体链接、同一 CI 出口与 Range 请求下，手机 UA 返回 HTTP 403 / 0 字节，桌面 UA 返回 HTTP 206 / 1024 字节，Content-Type 为 video/mp4 且包含 MP4 文件头。证实该样本的 UA 兼容性问题；不等于用户 JOJO 剧集已完成真机验收。普通 BV API 探测返回 412，随后使用公开番剧样本完成对照。未使用用户账号、未打印签名 URL。
 - CI 完成测试、编译、Lint 和签名验证后，在独立 `anime-shelf-apk` 分支写入已验证 APK 及校验文件，提供浏览器直接下载入口。
 - 继续使用 `anime-shelf-debug-signing-v2` 缓存密钥；必须实际核对签名证书 SHA-256 为 `0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c`，才交付覆盖更新包。
+
+## APK 文件核验
+
+- Artifact：`12395154304`，构建与交付 job 均验证 APK v2 签名；证书与 0.1.0 / 0.1.1 一致。
+- APK 大小：4,906,938 字节；SHA-256：`fa30c03c40a953ad9160677993cc80078848b78055d97d7fe6da3956888decef`。
+- 独立分支交付提交：`c999a5e8dfcae020d95246b3e187a46cceb0ac79`，远程 Git blob 与本地已验证 APK 一致。
+- [直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/c999a5e8dfcae020d95246b3e187a46cceb0ac79/downloads/anime-shelf-0.1.2.apk)。
 
 ## 既有版本
 
