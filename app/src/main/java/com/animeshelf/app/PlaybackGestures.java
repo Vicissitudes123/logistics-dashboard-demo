@@ -2,20 +2,20 @@ package com.animeshelf.app;
 
 /** Pointer-independent playback gestures. The UI decides when to apply previews. */
 public final class PlaybackGestures {
-    public enum Mode { PENDING, SEEK, SPEED, VOLUME, BLOCKED_SEEK, IGNORED }
+    public enum Mode { PENDING, SEEK, BRIGHTNESS, VOLUME, BLOCKED_SEEK, IGNORED }
 
     public static final class Snapshot {
         public final long positionMs, durationMs;
         public final boolean seekable;
-        public final float speed;
+        public final float brightness;
         public final int volume, maxVolume;
 
         public Snapshot(long positionMs, long durationMs, boolean seekable,
-                        float speed, int volume, int maxVolume) {
+                        float brightness, int volume, int maxVolume) {
             this.positionMs = positionMs;
             this.durationMs = durationMs;
             this.seekable = seekable;
-            this.speed = speed;
+            this.brightness = brightness;
             this.volume = volume;
             this.maxVolume = maxVolume;
         }
@@ -24,14 +24,14 @@ public final class PlaybackGestures {
     public static final class Update {
         public final Mode mode;
         public final long positionMs;
-        public final float speed;
+        public final float brightness;
         public final int volume;
         public final boolean commitSeek;
 
-        private Update(Mode mode, long positionMs, float speed, int volume, boolean commitSeek) {
+        private Update(Mode mode, long positionMs, float brightness, int volume, boolean commitSeek) {
             this.mode = mode;
             this.positionMs = positionMs;
-            this.speed = speed;
+            this.brightness = brightness;
             this.volume = volume;
             this.commitSeek = commitSeek;
         }
@@ -42,7 +42,7 @@ public final class PlaybackGestures {
     private float startX, startY, slop;
     private int width, height, initialVolume, maxVolume;
     private long initialPositionMs, durationMs, previewPositionMs;
-    private float initialSpeed = 1f, previewSpeed = 1f;
+    private float initialBrightness = .5f, previewBrightness = .5f;
     private int previewVolume;
 
     /** A new pointer cancels any previous gesture. System-edge touches are not owned. */
@@ -51,7 +51,7 @@ public final class PlaybackGestures {
         active = false;
         mode = Mode.IGNORED;
         previewPositionMs = 0;
-        previewSpeed = 1f;
+        previewBrightness = .5f;
         previewVolume = 0;
         if (initial == null || width <= 0 || height <= 0 || !finite(x) || !finite(y)
                 || !finite(edgePx) || edgePx < 0 || !finite(touchSlop) || touchSlop < 0
@@ -71,11 +71,11 @@ public final class PlaybackGestures {
         initialPositionMs = Math.max(0L, initial.positionMs);
         if (durationMs > 0) initialPositionMs = Math.min(initialPositionMs, durationMs);
         seekable = initial.seekable && durationMs > 0;
-        initialSpeed = quantizedSpeed(finite(initial.speed) ? initial.speed : 1f);
+        initialBrightness = boundedBrightness(finite(initial.brightness) ? initial.brightness : .5f);
         maxVolume = Math.max(0, initial.maxVolume);
         initialVolume = Math.max(0, Math.min(initial.volume, maxVolume));
         previewPositionMs = initialPositionMs;
-        previewSpeed = initialSpeed;
+        previewBrightness = initialBrightness;
         previewVolume = initialVolume;
         active = true;
         mode = Mode.PENDING;
@@ -95,7 +95,7 @@ public final class PlaybackGestures {
         if (mode == Mode.PENDING) {
             if (Math.max(Math.abs(dx), Math.abs(dy)) <= slop) return update(false);
             if (Math.abs(dx) >= Math.abs(dy)) mode = seekable ? Mode.SEEK : Mode.BLOCKED_SEEK;
-            else mode = startsOnLeft ? Mode.SPEED : Mode.VOLUME;
+            else mode = startsOnLeft ? Mode.BRIGHTNESS : Mode.VOLUME;
         }
 
         switch (mode) {
@@ -105,8 +105,8 @@ public final class PlaybackGestures {
                 previewPositionMs = Math.min(durationMs,
                     Math.max(0L, Math.round(Math.max(0d, Math.min((double) durationMs, target)))));
                 break;
-            case SPEED:
-                previewSpeed = quantizedSpeed(initialSpeed - dy / (height * 0.6d) * 2.75d);
+            case BRIGHTNESS:
+                previewBrightness = boundedBrightness(initialBrightness - dy / (height * 0.6d) * .95d);
                 break;
             case VOLUME:
                 double volume = initialVolume - dy / (height * 0.6d) * maxVolume;
@@ -133,12 +133,11 @@ public final class PlaybackGestures {
     }
 
     private Update update(boolean commitSeek) {
-        return new Update(mode, previewPositionMs, previewSpeed, previewVolume, commitSeek);
+        return new Update(mode, previewPositionMs, previewBrightness, previewVolume, commitSeek);
     }
 
-    private static float quantizedSpeed(double speed) {
-        double bounded = Math.max(0.25d, Math.min(3d, speed));
-        return Math.round(bounded * 4d) / 4f;
+    private static float boundedBrightness(double brightness) {
+        return (float) Math.max(.05d, Math.min(1d, brightness));
     }
 
     private static boolean finite(float value) {

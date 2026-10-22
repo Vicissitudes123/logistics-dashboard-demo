@@ -5,6 +5,7 @@ import static org.junit.Assert.*;
 import android.content.Context;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.RippleDrawable;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
@@ -70,6 +71,10 @@ public class PlayerOverlayDensityTest {
         assertNotNull("Missing icon: " + description, found);
         assertTrue(description, found instanceof ImageView);
         ImageView button = (ImageView) found;
+        assertTrue(description + " keeps only transient touch feedback", button.getBackground() instanceof RippleDrawable);
+        RippleDrawable background = (RippleDrawable) button.getBackground();
+        assertEquals(description + " has no persistent background content", 1, background.getNumberOfLayers());
+        assertEquals(description + " has only the non-visible ripple mask", android.R.id.mask, background.getId(0));
         assertTrue(description + " touch width", button.getWidth() / density >= 48f);
         assertTrue(description + " touch height", button.getHeight() / density >= 48f);
         Drawable drawable = button.getDrawable();
@@ -114,6 +119,9 @@ public class PlayerOverlayDensityTest {
         @Override public void togglePlayback() { playing = !playing; }
         @Override public void seekTo(long position) { }
         @Override public void setSpeed(float speed) { }
+        @Override public float brightness() { return .5f; }
+        @Override public void setBrightness(float brightness) { }
+        @Override public void setTemporarySpeed(float speed) { }
         @Override public void chooseSpeed() { }
         @Override public void chooseEpisode() { }
         @Override public void chooseDisplay() { }

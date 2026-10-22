@@ -6,6 +6,7 @@ import android.app.AlertDialog;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.view.MotionEvent;
 import android.widget.Button;
@@ -19,6 +20,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.time.Duration;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -287,6 +289,69 @@ public class MainNavigationTest {
         assertEquals(76000, store.getProgress(episode.id).positionMs);
         assertFalse(playback.playWhenReady);
         assertFalse(playback.released);
+    }
+
+    @Test @Config(qualifiers = "w640dp-h360dp-land-mdpi")
+    public void pausingDuringLongPressRestoresPlaybackSpeedWithoutChangingItsSavedPreference() throws Exception {
+        attachPlayback(Player.STATE_READY, 76000, true);
+        playback.speed = .75f;
+        store.setSpeed(.75f);
+        invoke("setFullScreen", new Class<?>[]{boolean.class}, true);
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle();
+        View root = (View) get("root");
+        root.measure(View.MeasureSpec.makeMeasureSpec(640, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 640, 360);
+        PlayerOverlay overlay = (PlayerOverlay) get("playerOverlay");
+        overlay.hideControls();
+        long downTime = android.os.SystemClock.uptimeMillis();
+        dispatch(overlay, downTime, MotionEvent.ACTION_DOWN, 200, 160);
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idleFor(
+            Duration.ofMillis(ViewConfiguration.getLongPressTimeout() + 1));
+        assertEquals(2f, playback.speed, .001f);
+        assertEquals(.75f, store.getSpeed(), .001f);
+
+        controller.pause();
+
+        assertEquals(.75f, playback.speed, .001f);
+        assertEquals(.75f, store.getSpeed(), .001f);
+        assertFalse(playback.playWhenReady);
+        assertEquals(76000, store.getProgress(episode.id).positionMs);
+        controller.resume();
+        dispatch(overlay, downTime, MotionEvent.ACTION_UP, 200, 160);
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idleFor(
+            Duration.ofMillis(ViewConfiguration.getLongPressTimeout() + 50));
+        assertEquals(.75f, playback.speed, .001f);
+        assertEquals(.75f, store.getSpeed(), .001f);
+        assertEquals(0, playback.playCalls);
+        assertEquals(0, playback.seekCalls);
+    }
+
+    @Test public void playbackBrightnessStaysInThisWindowAndRestoresAcrossPauseResumeAndHome() throws Exception {
+        attachPlayback(Player.STATE_READY, 52000, true);
+        float initialBrightness = activity.getWindow().getAttributes().screenBrightness;
+        int systemBrightness = android.provider.Settings.System.getInt(activity.getContentResolver(),
+            android.provider.Settings.System.SCREEN_BRIGHTNESS, -1);
+        store.setSpeed(1.5f);
+
+        invoke("setPlaybackBrightness", new Class<?>[]{float.class}, -.2f);
+        assertEquals(.05f, activity.getWindow().getAttributes().screenBrightness, .001f);
+        invoke("setPlaybackBrightness", new Class<?>[]{float.class}, 2f);
+        assertEquals(1f, activity.getWindow().getAttributes().screenBrightness, .001f);
+        invoke("setPlaybackBrightness", new Class<?>[]{float.class}, .8f);
+        assertEquals(.8f, activity.getWindow().getAttributes().screenBrightness, .001f);
+
+        controller.pause();
+        assertEquals(initialBrightness, activity.getWindow().getAttributes().screenBrightness, .001f);
+        controller.resume();
+        assertEquals(.8f, activity.getWindow().getAttributes().screenBrightness, .001f);
+        click("首页");
+        assertEquals(initialBrightness, activity.getWindow().getAttributes().screenBrightness, .001f);
+        assertEquals(systemBrightness, android.provider.Settings.System.getInt(activity.getContentResolver(),
+            android.provider.Settings.System.SCREEN_BRIGHTNESS, -1));
+        assertEquals(1.5f, store.getSpeed(), .001f);
+        assertTrue(playback.released);
+        assertNull(get("player"));
     }
 
     @Test public void offlineSeriesKeepsItsGroupDuringRefreshAndBackReturnsThroughTheCatalogue() throws Exception {

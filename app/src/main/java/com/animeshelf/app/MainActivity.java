@@ -20,6 +20,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -89,6 +90,11 @@ public final class MainActivity extends Activity {
     private int downloadMutationGeneration;
     private BatchDownloadSession batchSession;
     private AlertDialog batchDialog;
+    private boolean episodeSelectionMode, downloadSelectionMode;
+    private String selectionSeriesId;
+    private final Set<String> selectedEpisodeIds = new LinkedHashSet<>();
+    private final Set<String> selectedDownloadKeys = new LinkedHashSet<>();
+    private float originalWindowBrightness = -1f, playbackBrightness = -1f;
 
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
@@ -101,6 +107,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        originalWindowBrightness = getWindow().getAttributes().screenBrightness;
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
@@ -174,6 +181,9 @@ public final class MainActivity extends Activity {
             @Override public long positionMs() { return player == null ? 0 : player.getCurrentPosition(); }
             @Override public long durationMs() { return player == null ? -1 : player.getDuration(); }
             @Override public float speed() { return player == null ? store.getSpeed() : player.getPlaybackParameters().speed; }
+            @Override public float brightness() { return currentPlaybackBrightness(); }
+            @Override public void setBrightness(float value) { setPlaybackBrightness(value); }
+            @Override public void setTemporarySpeed(float rate) { setTemporaryPlaybackSpeed(rate); }
             @Override public void togglePlayback() { MainActivity.this.togglePlayback(); }
             @Override public void seekTo(long position) {
                 if (!canSeek()) return;
@@ -236,6 +246,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderLibrary() {
+        clearListSelection();
         closePlayback();
         downloadGroupId = null;
         currentSeries = null;
@@ -270,6 +281,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderSeries(Models.Series series) {
+        clearListSelection();
         closePlayback();
         renderSeriesContent(series);
         scroll.scrollTo(0, 0);
@@ -277,16 +289,18 @@ public final class MainActivity extends Activity {
 
     /** Render the episode list belonging to the active playback without closing it. */
     private void renderSeriesContent(Models.Series series) {
+        if (downloadSelectionMode || (episodeSelectionMode && !series.id.equals(selectionSeriesId))) clearListSelection();
         ++selectionToken;
         downloadsPage = false; seriesPage = true; currentSeries = series; content.removeAllViews();
         content.addView(button("‹  回到首页", false, v -> renderLibrary()));
-        title(series.title, series.episodes.size() + " 集  ·  点击剧集选择播放或下载");
+        title(series.title, series.episodes.size() + " 集  ·  点击播放，长按多选下载");
         boolean hasOnlineEpisodes = false;
         for (Models.Episode item : series.episodes) if (item.localUri == null || item.localUri.isEmpty()) hasOnlineEpisodes = true;
-        if (hasOnlineEpisodes) content.addView(button("批量下载", true, v -> chooseBatchEpisodes(series)), gapLayout());
+        if (episodeSelectionMode) addEpisodeSelectionActions(series);
+        else if (hasOnlineEpisodes) content.addView(button("批量下载", true, v -> chooseBatchEpisodes(series)), gapLayout());
         String lastId = store.getLastEpisode(series.id);
         Models.Episode resume = findEpisode(series, lastId);
-        if (resume != null) {
+        if (resume != null && !episodeSelectionMode) {
             Store.Progress p = store.getProgress(resume.id);
             content.addView(button("继续第 " + resume.index + " 集 · " + time(p.positionMs), true, v -> selectEpisode(resume)), gapLayout());
         }
@@ -304,10 +318,113 @@ public final class MainActivity extends Activity {
             labels.addView(text(detail, 11, MUTED));
             line.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
             boolean selected = currentEpisode != null && episode.id.equals(currentEpisode.id);
-            TextView play = text(selected ? "已选择" : "›", 14, AQUA);
-            line.addView(play); card.addView(line); card.setOnClickListener(v -> selectEpisode(episode));
+            boolean checked = selectedEpisodeIds.contains(episode.id);
+            TextView play = text(episodeSelectionMode ? (checked ? "✓" : "○") : selected ? "已选择" : "›", episodeSelectionMode ? 24 : 14, AQUA);
+            line.addView(play); card.addView(line);
+            card.setContentDescription("第 " + episode.index + " 集，长按选择");
+            markSelection(card, episodeSelectionMode && checked);
+            card.setOnClickListener(v -> {
+                if (episodeSelectionMode) toggleEpisodeSelection(series, episode);
+                else selectEpisode(episode);
+            });
+            card.setOnLongClickListener(v -> { beginEpisodeSelection(series, episode); return true; });
             content.addView(card, gapLayout());
         }
+    }
+
+    private void clearListSelection() {
+        episodeSelectionMode = false; downloadSelectionMode = false; selectionSeriesId = null;
+        selectedEpisodeIds.clear(); selectedDownloadKeys.clear();
+    }
+
+    private void refreshSelectedList() {
+        int y = scroll.getScrollY();
+        if (downloadsPage) renderDownloads();
+        else if (currentSeries != null) renderSeriesContent(currentSeries);
+        scroll.scrollTo(0, y);
+    }
+
+    private void exitListSelection() { clearListSelection(); refreshSelectedList(); }
+
+    private void markSelection(View card, boolean selected) {
+        card.setSelected(selected);
+        GradientDrawable shape = background(selected ? PANEL_LIGHT : PANEL, 18);
+        if (selected) shape.setStroke(dp(2), PURPLE);
+        card.setBackground(shape);
+    }
+
+    private static boolean downloadable(Models.Episode episode) {
+        return episode.localUri == null || episode.localUri.isEmpty();
+    }
+
+    private void beginEpisodeSelection(Models.Series series, Models.Episode episode) {
+        if (!downloadable(episode)) { notice("本地视频已经在手机上，无需下载"); return; }
+        if (!episodeSelectionMode || !series.id.equals(selectionSeriesId)) clearListSelection();
+        episodeSelectionMode = true; selectionSeriesId = series.id;
+        selectedEpisodeIds.add(episode.id);
+        refreshSelectedList();
+    }
+
+    private void toggleEpisodeSelection(Models.Series series, Models.Episode episode) {
+        if (!downloadable(episode)) { notice("本地视频无需下载"); return; }
+        if (!selectedEpisodeIds.remove(episode.id)) selectedEpisodeIds.add(episode.id);
+        refreshSelectedList();
+    }
+
+    private void addEpisodeSelectionActions(Models.Series series) {
+        List<Models.Episode> eligible = new ArrayList<>(), chosen = new ArrayList<>();
+        Set<String> availableIds = new LinkedHashSet<>();
+        for (Models.Episode episode : DownloadCatalogue.episodes(series.episodes)) if (downloadable(episode)) {
+            eligible.add(episode); availableIds.add(episode.id);
+        }
+        selectedEpisodeIds.retainAll(availableIds);
+        for (Models.Episode episode : eligible) if (selectedEpisodeIds.contains(episode.id)) chosen.add(episode);
+        content.addView(text("已选 " + chosen.size() + " 集 · 点击条目勾选，返回键退出多选", 12, AQUA), gapLayout());
+        LinearLayout actions = row();
+        boolean all = !eligible.isEmpty() && chosen.size() == eligible.size();
+        addEqual(actions, button(all ? "清空选择" : "全选", false, v -> {
+            selectedEpisodeIds.clear();
+            if (!all) selectedEpisodeIds.addAll(availableIds);
+            refreshSelectedList();
+        }));
+        addEqual(actions, button("取消", false, v -> exitListSelection()));
+        Button download = button("下载 " + chosen.size() + " 集", true, v -> chooseBatchQuality(series, new ArrayList<>(chosen)));
+        download.setEnabled(!chosen.isEmpty()); addEqual(actions, download);
+        content.addView(actions, gapLayout());
+    }
+
+    private void beginDownloadSelection(List<MediaRepository.OfflineItem> items) {
+        if (!downloadSelectionMode) clearListSelection();
+        downloadSelectionMode = true;
+        for (MediaRepository.OfflineItem item : items) selectedDownloadKeys.add(item.key);
+        refreshSelectedList();
+    }
+
+    private void toggleDownloadSelection(List<MediaRepository.OfflineItem> items) {
+        boolean all = !items.isEmpty();
+        for (MediaRepository.OfflineItem item : items) if (!selectedDownloadKeys.contains(item.key)) all = false;
+        for (MediaRepository.OfflineItem item : items) {
+            if (all) selectedDownloadKeys.remove(item.key); else selectedDownloadKeys.add(item.key);
+        }
+        refreshSelectedList();
+    }
+
+    private void addDownloadSelectionActions(List<MediaRepository.OfflineItem> visible) {
+        List<MediaRepository.OfflineItem> chosen = new ArrayList<>();
+        for (MediaRepository.OfflineItem item : visible) if (selectedDownloadKeys.contains(item.key)) chosen.add(item);
+        content.addView(text("已选 " + chosen.size() + " 份视频 · 点击条目勾选，返回键退出多选", 12, AQUA), gapLayout());
+        LinearLayout actions = row();
+        boolean all = !visible.isEmpty() && chosen.size() == visible.size();
+        addEqual(actions, button(all ? "清空选择" : "全选", false, v -> {
+            for (MediaRepository.OfflineItem item : visible) {
+                if (all) selectedDownloadKeys.remove(item.key); else selectedDownloadKeys.add(item.key);
+            }
+            refreshSelectedList();
+        }));
+        addEqual(actions, button("取消", false, v -> exitListSelection()));
+        Button remove = button("删除 " + chosen.size() + " 份", true, v -> confirmRemoveDownloads(new ArrayList<>(chosen)));
+        remove.setEnabled(!chosen.isEmpty()); addEqual(actions, remove);
+        content.addView(actions, gapLayout());
     }
 
     private void selectEpisode(Models.Episode episode) {
@@ -367,6 +484,7 @@ public final class MainActivity extends Activity {
     }
 
     private void play(Models.Episode episode, Models.Quality quality, boolean offline, long resumeOverrideMs) {
+        clearListSelection();
         ++selectionToken; playerOverlay.setActive(false); savePosition(); sourceReady = false;
         if (player != null) { playerView.setPlayer(null); player.release(); player = null; }
         currentEpisode = episode; currentQuality = quality; currentOffline = offline;
@@ -403,6 +521,7 @@ public final class MainActivity extends Activity {
                 }
             });
             next.prepare(); next.play();
+            applyPlaybackBrightness();
             playerPanel.setVisibility(View.VISIBLE);
             playerOverlay.setTitle(episode.seriesTitle + " · 第 " + episode.index + " 集",
                 episode.title + "  ·  " + (quality == null ? "本地文件" : quality.label + (offline ? " · 离线" : " · 在线")));
@@ -473,6 +592,7 @@ public final class MainActivity extends Activity {
     }
 
     private void closePlayback() {
+        restoreWindowBrightness();
         cancelBatchDownloads();
         ++selectionToken;
         ++taskStatusToken;
@@ -524,10 +644,44 @@ public final class MainActivity extends Activity {
     }
 
     private void setPlaybackSpeed(float rate) {
+        playerOverlay.cancelInteraction();
         float speed = Math.max(.25f, Math.min(3f, Math.round(rate * 4f) / 4f));
         store.setSpeed(speed);
         if (player != null) player.setPlaybackSpeed(speed);
         playerOverlay.refresh();
+    }
+
+    private void setTemporaryPlaybackSpeed(float rate) {
+        if (player != null && Float.isFinite(rate)) player.setPlaybackSpeed(Math.max(.25f, Math.min(3f, rate)));
+    }
+
+    private float currentPlaybackBrightness() {
+        if (playbackBrightness >= 0) return playbackBrightness;
+        float current = getWindow().getAttributes().screenBrightness;
+        if (current < 0) {
+            try { current = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, 128) / 255f; }
+            catch (RuntimeException ignored) { current = .5f; }
+        }
+        return Math.max(.05f, Math.min(1f, current));
+    }
+
+    private void setPlaybackBrightness(float value) {
+        if (!Float.isFinite(value)) return;
+        playbackBrightness = Math.max(.05f, Math.min(1f, value));
+        applyPlaybackBrightness();
+    }
+
+    private void applyPlaybackBrightness() {
+        if (player == null || playbackBrightness < 0) return;
+        WindowManager.LayoutParams params = getWindow().getAttributes();
+        params.screenBrightness = playbackBrightness;
+        getWindow().setAttributes(params);
+    }
+
+    private void restoreWindowBrightness() {
+        WindowManager.LayoutParams params = getWindow().getAttributes();
+        params.screenBrightness = originalWindowBrightness;
+        getWindow().setAttributes(params);
     }
 
     private void chooseSpeed() {
@@ -539,7 +693,7 @@ public final class MainActivity extends Activity {
             names[i] = speedText(rates[i]);
             if (Math.abs(player.getPlaybackParameters().speed - rates[i]) < .01f) selected = i;
         }
-        new AlertDialog.Builder(this).setTitle("播放速度 · 左侧上下滑动也可调节")
+        new AlertDialog.Builder(this).setTitle("播放速度 · 长按画面可临时加速")
             .setSingleChoiceItems(names, selected, (dialog, index) -> {
                 setPlaybackSpeed(rates[index]); dialog.dismiss();
             }).setNegativeButton("关闭", null).show();
@@ -641,6 +795,7 @@ public final class MainActivity extends Activity {
     }
     @Override public void onBackPressed() {
         if (fullScreen) { setFullScreen(false); return; }
+        if (episodeSelectionMode || downloadSelectionMode) { exitListSelection(); return; }
         if (downloadsPage && downloadGroupId != null) { downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0); return; }
         if (player != null || playerPanel.getVisibility() == View.VISIBLE || seriesPage || downloadsPage) { renderLibrary(); return; }
         super.onBackPressed();
@@ -685,6 +840,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openDownloads() {
+        clearListSelection();
         closePlayback();
         downloadGroupId = null;
         renderDownloads();
@@ -692,6 +848,7 @@ public final class MainActivity extends Activity {
     }
 
     private void openDownloadGroup(DownloadCatalogue.Group group) {
+        clearListSelection();
         downloadGroupId = group.id;
         downloadGroupTitle = group.title;
         renderDownloads();
@@ -699,10 +856,14 @@ public final class MainActivity extends Activity {
     }
 
     private void renderDownloads() {
+        if (episodeSelectionMode) clearListSelection();
         downloadsPage = true; seriesPage = false; lastRender = System.currentTimeMillis();
         int previousScroll = scroll.getScrollY();
         content.removeAllViews();
         List<MediaRepository.OfflineItem> entries = media.downloads();
+        Set<String> availableKeys = new LinkedHashSet<>();
+        for (MediaRepository.OfflineItem item : entries) availableKeys.add(item.key);
+        selectedDownloadKeys.retainAll(availableKeys);
         List<DownloadCatalogue.Group> groups = DownloadCatalogue.groups(entries);
         DownloadCatalogue.Group selected = null;
         for (DownloadCatalogue.Group group : groups) if (group.id.equals(downloadGroupId)) selected = group;
@@ -712,23 +873,32 @@ public final class MainActivity extends Activity {
                 empty("还没有下载任务", "进入一部番剧，点击「批量下载」，\n或为单集选择清晰度下载。", "去番剧库", this::renderLibrary);
                 return;
             }
-            addDownloadActions(entries);
+            if (downloadSelectionMode) addDownloadSelectionActions(entries); else addDownloadActions(entries);
             for (DownloadCatalogue.Group group : groups) {
                 LinearLayout card = card();
+                card.setContentDescription("离线番剧 " + group.title + "，长按选择");
                 TextView name = text(group.title, 18, TEXT); name.setTypeface(null, Typeface.BOLD); card.addView(name);
                 TextView detail = text(group.episodeCount + " 集 · " + group.items.size() + " 份视频 · 已完成 "
                     + group.completeCount + " 份 · " + android.text.format.Formatter.formatShortFileSize(this, group.bytes), 12, MUTED);
                 detail.setPadding(0, dp(7), 0, dp(12)); card.addView(detail);
-                LinearLayout actions = row();
-                addEqual(actions, button("查看已下载剧集", true, v -> openDownloadGroup(group)));
-                addEqual(actions, button("删除整部", false, v -> confirmRemoveDownloads(group.items)));
-                card.addView(actions);
-                card.setOnClickListener(v -> openDownloadGroup(group));
+                if (downloadSelectionMode) {
+                    int checked = 0;
+                    for (MediaRepository.OfflineItem item : group.items) if (selectedDownloadKeys.contains(item.key)) checked++;
+                    card.addView(text(checked == group.items.size() ? "✓ 已全选" : checked > 0 ? "已选 " + checked + " 份" : "○ 未选择", 16, AQUA));
+                    markSelection(card, checked > 0);
+                } else {
+                    LinearLayout actions = row();
+                    addEqual(actions, button("查看已下载剧集", true, v -> openDownloadGroup(group)));
+                    addEqual(actions, button("删除整部", false, v -> confirmRemoveDownloads(group.items)));
+                    card.addView(actions);
+                }
+                card.setOnClickListener(v -> { if (downloadSelectionMode) toggleDownloadSelection(group.items); else openDownloadGroup(group); });
+                card.setOnLongClickListener(v -> { beginDownloadSelection(group.items); return true; });
                 content.addView(card, gapLayout());
             }
         } else {
             content.addView(button("‹  全部离线番剧", false, v -> {
-                downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0);
+                clearListSelection(); downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0);
             }));
             title(selected == null ? downloadGroupTitle : selected.title, "按集数从小到大排列 · 同集可保留多个清晰度");
             if (selected == null) {
@@ -736,7 +906,7 @@ public final class MainActivity extends Activity {
                     () -> { downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0); });
                 return;
             }
-            addDownloadActions(selected.items);
+            if (downloadSelectionMode) addDownloadSelectionActions(selected.items); else addDownloadActions(selected.items);
             for (MediaRepository.OfflineItem entry : selected.items) renderDownloadItem(entry);
         }
         scroll.scrollTo(0, previousScroll);
@@ -757,12 +927,22 @@ public final class MainActivity extends Activity {
 
     private void renderDownloadItem(MediaRepository.OfflineItem entry) {
         LinearLayout card = card();
+        card.setContentDescription("离线第 " + entry.episode.index + " 集，" + entry.quality.label + "，长按选择");
+        List<MediaRepository.OfflineItem> item = java.util.Collections.singletonList(entry);
+        card.setOnLongClickListener(v -> { beginDownloadSelection(item); return true; });
+        card.setOnClickListener(v -> { if (downloadSelectionMode) toggleDownloadSelection(item); });
         TextView name = text("第 " + entry.episode.index + " 集 · " + entry.episode.title, 16, TEXT);
         name.setTypeface(null, Typeface.BOLD); card.addView(name);
         card.addView(text(entry.quality.label + "  ·  " + entry.status, 12, AQUA));
         String size = android.text.format.Formatter.formatShortFileSize(this, entry.bytesDownloaded);
         if (entry.percent >= 0 && !entry.complete) size += String.format(Locale.CHINA, " · %.0f%%", entry.percent);
         card.addView(text(size, 12, MUTED));
+        if (downloadSelectionMode) {
+            boolean checked = selectedDownloadKeys.contains(entry.key);
+            markSelection(card, checked);
+            card.addView(text(checked ? "✓ 已选择" : "○ 未选择", 18, AQUA));
+            content.addView(card, gapLayout()); return;
+        }
         final String diagnostic = entry.errorDetail == null || entry.errorDetail.trim().isEmpty()
             ? "此任务尚未记录具体错误。请重新解析重试，失败后可查看新的诊断。" : entry.errorDetail;
         if (entry.failed) {
@@ -848,6 +1028,7 @@ public final class MainActivity extends Activity {
     }
 
     private void removeDownloads(List<MediaRepository.OfflineItem> snapshot) {
+        clearListSelection();
         ++downloadMutationGeneration;
         cancelBatchDownloads();
         Set<String> keys = new LinkedHashSet<>();
@@ -1075,16 +1256,19 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        applyPlaybackBrightness();
         applySystemBars();
         if (playerOverlay != null && player != null) playerOverlay.setActive(true);
     }
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) applySystemBars();
+        else if (playerOverlay != null) playerOverlay.cancelInteraction();
     }
     @Override protected void onPause() {
         cancelBatchDownloads();
         if (playerOverlay != null) playerOverlay.setActive(false);
+        restoreWindowBrightness();
         savePosition(); if (player != null) player.pause(); super.onPause();
     }
     @Override protected void onDestroy() {

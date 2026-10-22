@@ -10,6 +10,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import java.time.Duration;
@@ -147,7 +148,7 @@ public class PlayerOverlayTest {
         assertEquals(1, host.seekCalls);
     }
 
-    @Test public void leftSwipeChangesSpeedAndRightSwipeChangesTheSystemMusicVolume() {
+    @Test public void leftSwipeChangesBrightnessAndRightSwipeChangesVolumeWithoutChangingSpeed() {
         AudioManager audio = (AudioManager) activity.getSystemService(Context.AUDIO_SERVICE);
         int max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
         assertTrue(max > 1);
@@ -157,16 +158,129 @@ public class PlayerOverlayTest {
         down(160, 200);
         touch(MotionEvent.ACTION_MOVE, 162, 100);
         touch(MotionEvent.ACTION_UP, 162, 100);
-        assertTrue(host.speed > 1f);
+        assertTrue(host.brightness > .5f);
+        assertEquals(1f, host.speed, .001f);
         assertEquals(initialVolume, audio.getStreamVolume(AudioManager.STREAM_MUSIC));
-        float changedSpeed = host.speed;
+        float changedBrightness = host.brightness;
 
         down(480, 200);
         touch(MotionEvent.ACTION_MOVE, 478, 100);
         touch(MotionEvent.ACTION_UP, 478, 100);
         assertTrue(audio.getStreamVolume(AudioManager.STREAM_MUSIC) > initialVolume);
-        assertEquals(changedSpeed, host.speed, .001f);
+        assertEquals(changedBrightness, host.brightness, .001f);
+        assertEquals(1f, host.speed, .001f);
+        assertEquals(0, host.persistedSpeedChanges);
+        assertEquals(0, host.temporarySpeedChanges);
         assertEquals(0, host.seekCalls);
+    }
+
+    @Test public void longPressStartsAtTheThresholdAndRestoresEachOriginalSpeedOnRelease() {
+        for (float original : new float[]{.75f, 1.5f}) {
+            host.speed = original;
+            overlay.hideControls();
+            int changes = host.temporarySpeedChanges;
+            down(200, 160);
+            idle(ViewConfiguration.getLongPressTimeout() - 1);
+            assertEquals("No boost before the long-press threshold", original, host.speed, .001f);
+            assertEquals(changes, host.temporarySpeedChanges);
+
+            idle(2);
+            assertEquals(2f, host.speed, .001f);
+            assertEquals(changes + 1, host.temporarySpeedChanges);
+            boolean visibleDuringHold = overlay.areControlsVisible();
+            touch(MotionEvent.ACTION_UP, 200, 160);
+            assertEquals(original, host.speed, .001f);
+            assertEquals(changes + 2, host.temporarySpeedChanges);
+            idle(ViewConfiguration.getDoubleTapTimeout() + 50);
+            assertEquals("Releasing a long press must not also toggle the controls",
+                visibleDuringHold, overlay.areControlsVisible());
+            assertEquals(0, host.persistedSpeedChanges);
+            assertEquals(0, host.playbackToggles);
+            assertEquals(0, host.seekCalls);
+        }
+    }
+
+    @Test public void everyInterruptedLongPressRestoresSpeedAndDiscardsTheTouchStream() {
+        for (String interruption : new String[]{"cancel", "second finger", "drag", "pause", "navigation", "dispose"}) {
+            overlay.setActive(true);
+            overlay.hideControls();
+            host.speed = .75f;
+            down(200, 160);
+            idle(ViewConfiguration.getLongPressTimeout() + 1);
+            assertEquals(interruption + " starts with boost", 2f, host.speed, .001f);
+            switch (interruption) {
+                case "cancel": touch(MotionEvent.ACTION_CANCEL, 200, 160); break;
+                case "second finger": secondFinger(MotionEvent.ACTION_POINTER_DOWN | (1 << MotionEvent.ACTION_POINTER_INDEX_SHIFT)); break;
+                case "drag": touch(MotionEvent.ACTION_MOVE, 300, 160); break;
+                case "pause": overlay.setActive(false); break;
+                case "navigation": overlay.cancelInteraction(); break;
+                case "dispose": overlay.dispose(); break;
+                default: fail(interruption);
+            }
+            assertEquals(interruption + " restores the original speed", .75f, host.speed, .001f);
+            int changesAfterCancellation = host.temporarySpeedChanges;
+            touch(MotionEvent.ACTION_UP, 300, 160);
+            idle(ViewConfiguration.getLongPressTimeout() + 50);
+            assertEquals(interruption + " has no late speed change", changesAfterCancellation, host.temporarySpeedChanges);
+            assertEquals(0, host.persistedSpeedChanges);
+            assertEquals(0, host.seekCalls);
+            assertEquals(0, host.playbackToggles);
+            assertEquals(.5f, host.brightness, .001f);
+        }
+    }
+
+    @Test public void draggingBeforeTheLongPressThresholdSeeksWithoutStartingABoost() {
+        host.speed = 1.5f;
+        overlay.hideControls();
+        down(200, 160);
+        idle(ViewConfiguration.getLongPressTimeout() / 2);
+        touch(MotionEvent.ACTION_MOVE, 300, 160);
+        idle(ViewConfiguration.getLongPressTimeout() + 1);
+        assertEquals(1.5f, host.speed, .001f);
+        assertEquals(0, host.temporarySpeedChanges);
+        assertEquals(0, host.seekCalls);
+        touch(MotionEvent.ACTION_UP, 300, 160);
+        assertEquals(1, host.seekCalls);
+        assertEquals(0, host.persistedSpeedChanges);
+        assertEquals(0, host.playbackToggles);
+    }
+
+    @Test public void doubleTapThatResumesPlaybackCannotTurnIntoALongPressBoost() {
+        host.playing = false;
+        host.speed = 1.5f;
+        overlay.refresh();
+        tap(200, 160);
+        idle(60);
+        down(200, 160);
+        assertEquals(1, host.playbackToggles);
+        assertTrue(host.playing);
+        idle(ViewConfiguration.getLongPressTimeout() + 1);
+        assertEquals(1.5f, host.speed, .001f);
+        assertEquals(0, host.temporarySpeedChanges);
+        touch(MotionEvent.ACTION_UP, 200, 160);
+        idle(ViewConfiguration.getDoubleTapTimeout() + 50);
+        assertEquals(1, host.playbackToggles);
+        assertEquals(0, host.persistedSpeedChanges);
+    }
+
+    @Test public void pausedPlaybackAndCancelledPendingTouchesNeverStartALateBoost() {
+        host.playing = false;
+        overlay.refresh();
+        overlay.hideControls();
+        down(200, 160);
+        idle(ViewConfiguration.getLongPressTimeout() + 1);
+        touch(MotionEvent.ACTION_UP, 200, 160);
+        assertEquals(0, host.temporarySpeedChanges);
+        idle(ViewConfiguration.getDoubleTapTimeout() + 50);
+
+        host.playing = true;
+        down(200, 160);
+        idle(ViewConfiguration.getLongPressTimeout() / 2);
+        overlay.setActive(false);
+        idle(ViewConfiguration.getLongPressTimeout() + 1);
+        assertEquals(0, host.temporarySpeedChanges);
+        assertEquals(0, host.persistedSpeedChanges);
+        assertEquals(0, host.playbackToggles);
     }
 
     @Test public void compactAndLandscapeControlsKeepSeparateFortyEightDpTargets() {
@@ -262,6 +376,9 @@ public class PlayerOverlayTest {
         return details.toString();
     }
     private void tap(float x, float y) { down(x, y); touch(MotionEvent.ACTION_UP, x, y); }
+    private static void idle(long milliseconds) {
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(milliseconds));
+    }
     private void down(float x, float y) { downTime = SystemClock.uptimeMillis(); touch(MotionEvent.ACTION_DOWN, x, y); }
     private void touch(int action, float x, float y) {
         MotionEvent event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0);
@@ -287,8 +404,8 @@ public class PlayerOverlayTest {
     private static final class FakeHost implements PlayerOverlay.Host {
         boolean playing = true, seekable = true;
         long position = 60000, duration = 300000;
-        float speed = 1f;
-        int playbackToggles, fullscreenToggles, seekCalls, observations;
+        float speed = 1f, brightness = .5f;
+        int playbackToggles, fullscreenToggles, seekCalls, observations, persistedSpeedChanges, temporarySpeedChanges;
         @Override public boolean hasPlayer() { observations++; return true; }
         @Override public boolean isPlaying() { observations++; return playing; }
         @Override public boolean canSeek() { observations++; return seekable; }
@@ -297,7 +414,10 @@ public class PlayerOverlayTest {
         @Override public float speed() { observations++; return speed; }
         @Override public void togglePlayback() { playbackToggles++; playing = !playing; }
         @Override public void seekTo(long value) { seekCalls++; position = value; }
-        @Override public void setSpeed(float value) { speed = value; }
+        @Override public void setSpeed(float value) { persistedSpeedChanges++; speed = value; }
+        @Override public float brightness() { observations++; return brightness; }
+        @Override public void setBrightness(float value) { brightness = value; }
+        @Override public void setTemporarySpeed(float value) { temporarySpeedChanges++; speed = value; }
         @Override public void chooseSpeed() { }
         @Override public void chooseEpisode() { }
         @Override public void chooseDisplay() { }
