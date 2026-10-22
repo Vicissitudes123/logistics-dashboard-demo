@@ -176,22 +176,26 @@ public class PlayerOverlayTest {
             layout(size[0], size[1]);
             String[] buttons = {"返回", "回到首页", "暂停", "播放速度", "选集", "显示方式", "全屏"};
             for (String description : buttons) {
-                Rect rectangle = bounds(find(description));
-                assertTrue(description, rectangle.width() >= 48);
-                assertTrue(description, rectangle.height() >= 48);
-                assertTrue(description, rectangle.left >= 0 && rectangle.top >= 0
+                View button = find(description);
+                Rect rectangle = bounds(button);
+                String details = layoutDetails(button, size);
+                assertTrue("Touch width must be at least 48 px: " + details, rectangle.width() >= 48);
+                assertTrue("Touch height must be at least 48 px: " + details, rectangle.height() >= 48);
+                assertTrue("Control must fit inside the requested viewport: " + details, rectangle.left >= 0 && rectangle.top >= 0
                     && rectangle.right <= size[0] && rectangle.bottom <= size[1]);
             }
             for (int i = 0; i < buttons.length; i++) {
                 for (int j = i + 1; j < buttons.length; j++) {
-                    assertFalse(buttons[i] + " overlaps " + buttons[j],
+                    assertFalse(layoutDetails(find(buttons[i]), size) + " overlaps "
+                            + layoutDetails(find(buttons[j]), size),
                         Rect.intersects(bounds(find(buttons[i])), bounds(find(buttons[j]))));
                 }
             }
             Rect seek = bounds(find("播放进度")), full = bounds(find("全屏"));
-            assertTrue(seek.width() >= 48 && seek.height() >= 48);
-            assertFalse(Rect.intersects(seek, full));
-            assertTrue(full.centerX() > size[0] / 2 && full.centerY() > size[1] / 2);
+            assertTrue("Seek target: " + layoutDetails(find("播放进度"), size), seek.width() >= 48 && seek.height() >= 48);
+            assertFalse("Seek " + seek + " overlaps fullscreen " + full, Rect.intersects(seek, full));
+            assertTrue("Fullscreen must be at bottom right: " + layoutDetails(find("全屏"), size),
+                full.centerX() > size[0] / 2 && full.centerY() > size[1] / 2);
         }
     }
 
@@ -238,6 +242,24 @@ public class PlayerOverlayTest {
         Rect rect = new Rect(0, 0, view.getWidth(), view.getHeight());
         overlay.offsetDescendantRectToMyCoords(view, rect);
         return rect;
+    }
+    private String layoutDetails(View view, int[] viewport) {
+        StringBuilder details = new StringBuilder(String.valueOf(view.getContentDescription()))
+            .append(" bounds=").append(bounds(view))
+            .append(" viewport=").append(viewport[0]).append('x').append(viewport[1])
+            .append(" overlay=").append(overlay.getWidth()).append('x').append(overlay.getHeight());
+        View current = view;
+        while (current != null) {
+            details.append(" <- ").append(current.getClass().getSimpleName())
+                .append("[").append(current.getLeft()).append(',').append(current.getTop())
+                .append(',').append(current.getRight()).append(',').append(current.getBottom())
+                .append("; measured=").append(current.getMeasuredWidth()).append('x').append(current.getMeasuredHeight())
+                .append("; padding=").append(current.getPaddingLeft()).append(',').append(current.getPaddingTop())
+                .append(',').append(current.getPaddingRight()).append(',').append(current.getPaddingBottom()).append(']');
+            if (current == overlay || !(current.getParent() instanceof View)) break;
+            current = (View) current.getParent();
+        }
+        return details.toString();
     }
     private void tap(float x, float y) { down(x, y); touch(MotionEvent.ACTION_UP, x, y); }
     private void down(float x, float y) { downTime = SystemClock.uptimeMillis(); touch(MotionEvent.ACTION_DOWN, x, y); }

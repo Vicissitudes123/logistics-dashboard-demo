@@ -97,7 +97,7 @@ public final class PlayerOverlay extends FrameLayout {
         topBar.setPadding(dp(4), dp(2), dp(4), dp(2));
         topBar.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
             new int[]{0xD9000000, 0x77000000, 0x00000000}));
-        topBar.addView(icon("返回", Glyph.BACK, host::back), new LinearLayout.LayoutParams(dp(48), dp(48)));
+        topBar.addView(icon("返回", Glyph.BACK, false, host::back), new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout titles = new LinearLayout(context);
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.setPadding(dp(6), 0, dp(8), 0);
@@ -107,7 +107,7 @@ public final class PlayerOverlay extends FrameLayout {
         subtitle.setPadding(0, dp(2), 0, 0);
         titles.addView(title); titles.addView(subtitle);
         topBar.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
-        topBar.addView(icon("回到首页", Glyph.HOME, host::home), new LinearLayout.LayoutParams(dp(48), dp(48)));
+        topBar.addView(icon("回到首页", Glyph.HOME, false, host::home), new LinearLayout.LayoutParams(dp(48), dp(48)));
         addView(topBar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
 
         bottomBar = new LinearLayout(context);
@@ -131,16 +131,14 @@ public final class PlayerOverlay extends FrameLayout {
         timeline.addView(duration, new LinearLayout.LayoutParams(dp(54), dp(32)));
         bottomBar.addView(timeline);
         LinearLayout actions = new LinearLayout(context); actions.setGravity(Gravity.CENTER_VERTICAL);
-        playButton = icon("播放", Glyph.PLAY, () -> { host.togglePlayback(); refresh(); });
-        playButton.setBackground(controlBackground(true));
+        playButton = icon("播放", Glyph.PLAY, true, () -> { host.togglePlayback(); refresh(); });
         actions.addView(playButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         speedButton = label("1.0×", "播放速度", host::chooseSpeed);
         actions.addView(speedButton, new LinearLayout.LayoutParams(dp(72), dp(48)));
         actions.addView(label("选集", "选集", host::chooseEpisode), new LinearLayout.LayoutParams(dp(52), dp(48)));
         actions.addView(label("画面", "显示方式", host::chooseDisplay), new LinearLayout.LayoutParams(dp(52), dp(48)));
         actions.addView(new View(context), new LinearLayout.LayoutParams(0, 1, 1));
-        fullButton = icon("全屏", Glyph.FULL, host::toggleFullScreen);
-        fullButton.setBackground(controlBackground(true));
+        fullButton = icon("全屏", Glyph.FULL, true, host::toggleFullScreen);
         actions.addView(fullButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         bottomBar.addView(actions);
         addView(bottomBar, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
@@ -332,13 +330,14 @@ public final class PlayerOverlay extends FrameLayout {
     }
     private void showFeedback(String value) { handler.removeCallbacks(hideFeedback); feedback.setText(value); feedback.setVisibility(VISIBLE); }
     private void dismissFeedbackSoon() { handler.removeCallbacks(hideFeedback); handler.postDelayed(hideFeedback, 1000); }
-    private ImageButton icon(String description, Glyph glyph, Runnable action) {
+    private ImageButton icon(String description, Glyph glyph, boolean emphasized, Runnable action) {
         ImageButton button = new ImageButton(getContext());
         // ImageButton's default CENTER uses intrinsic pixels: 24px was only 8dp
         // on xxhdpi phones. Both the intrinsic size and the content box use dp.
         button.setImageDrawable(new ControlIcon(glyph, dp(32)));
         button.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        button.setContentDescription(description); button.setBackground(controlBackground(false));
+        button.setContentDescription(description); button.setBackground(controlBackground(emphasized));
+        // Background insets replace View padding, so set the icon padding last.
         button.setPadding(dp(8), dp(8), dp(8), dp(8));
         button.setOnClickListener(v -> { action.run(); if (active) showControls(); }); return button;
     }

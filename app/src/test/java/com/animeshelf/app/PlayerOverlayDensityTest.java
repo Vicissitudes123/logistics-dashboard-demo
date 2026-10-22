@@ -77,11 +77,17 @@ public class PlayerOverlayDensityTest {
         RectF displayed = new RectF(drawable.getBounds());
         button.getImageMatrix().mapRect(displayed);
         displayed.offset(button.getPaddingLeft(), button.getPaddingTop());
+        String details = description + " density=" + density + " drawable=" + drawable.getBounds()
+            + " matrix=" + button.getImageMatrix() + " displayed=" + displayed
+            + " button=" + button.getWidth() + "x" + button.getHeight()
+            + " padding=" + button.getPaddingLeft() + "," + button.getPaddingTop()
+            + "," + button.getPaddingRight() + "," + button.getPaddingBottom()
+            + " overlay=" + root.getWidth() + "x" + root.getHeight();
         // A raw 24 px drawable centered inside a large button was only 8 dp at xxhdpi.
         // Mapping the real bounds through ImageView's matrix catches that regression.
-        assertEquals(description + " displayed width in dp", 32f, displayed.width() / density, .1f);
-        assertEquals(description + " displayed height in dp", 32f, displayed.height() / density, .1f);
-        assertTrue(description + " must fit inside its touch target", displayed.left >= 0
+        assertEquals("Displayed width in dp: " + details, 32f, displayed.width() / density, .1f);
+        assertEquals("Displayed height in dp: " + details, 32f, displayed.height() / density, .1f);
+        assertTrue("Icon must fit inside its touch target: " + details, displayed.left >= 0
             && displayed.top >= 0 && displayed.right <= button.getWidth() && displayed.bottom <= button.getHeight());
     }
 
