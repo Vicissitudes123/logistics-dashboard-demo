@@ -8,8 +8,10 @@ import android.graphics.ColorFilter;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
+import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.media.AudioManager;
 import android.os.Handler;
@@ -23,6 +25,7 @@ import android.view.ViewConfiguration;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -91,42 +94,53 @@ public final class PlayerOverlay extends FrameLayout {
 
         topBar = new LinearLayout(context);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(dp(4), dp(2), dp(8), dp(8));
-        topBar.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{0xD9000000, 0x00000000}));
+        topBar.setPadding(dp(4), dp(2), dp(4), dp(2));
+        topBar.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+            new int[]{0xD9000000, 0x77000000, 0x00000000}));
         topBar.addView(icon("返回", Glyph.BACK, host::back), new LinearLayout.LayoutParams(dp(48), dp(48)));
-        topBar.addView(icon("回到首页", Glyph.HOME, host::home), new LinearLayout.LayoutParams(dp(48), dp(48)));
         LinearLayout titles = new LinearLayout(context);
         titles.setOrientation(LinearLayout.VERTICAL);
-        title = text("", 14); title.setSingleLine(true); title.setEllipsize(TextUtils.TruncateAt.END);
-        subtitle = text("", 10); subtitle.setTextColor(0xFFC7CBD5); subtitle.setSingleLine(true); subtitle.setEllipsize(TextUtils.TruncateAt.END);
+        titles.setPadding(dp(6), 0, dp(8), 0);
+        title = text("", 16); title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        title.setSingleLine(true); title.setEllipsize(TextUtils.TruncateAt.END);
+        subtitle = text("", 12); subtitle.setTextColor(0xFFD3D8E2); subtitle.setSingleLine(true); subtitle.setEllipsize(TextUtils.TruncateAt.END);
+        subtitle.setPadding(0, dp(2), 0, 0);
         titles.addView(title); titles.addView(subtitle);
         topBar.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
+        topBar.addView(icon("回到首页", Glyph.HOME, host::home), new LinearLayout.LayoutParams(dp(48), dp(48)));
         addView(topBar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
 
         bottomBar = new LinearLayout(context);
         bottomBar.setOrientation(LinearLayout.VERTICAL);
-        bottomBar.setPadding(dp(8), dp(8), dp(8), dp(2));
-        bottomBar.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, new int[]{0xE6000000, 0x00000000}));
+        bottomBar.setPadding(dp(8), 0, dp(8), 0);
+        bottomBar.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
+            new int[]{0xE6000000, 0x88000000, 0x00000000}));
         LinearLayout timeline = new LinearLayout(context); timeline.setGravity(Gravity.CENTER_VERTICAL);
-        position = text("00:00", 11); duration = text("--:--", 11);
+        position = text("00:00", 12); duration = text("--:--", 12);
+        position.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        duration.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         position.setGravity(Gravity.CENTER); duration.setGravity(Gravity.CENTER);
-        timeline.addView(position, new LinearLayout.LayoutParams(dp(50), dp(32)));
+        position.setSingleLine(true); duration.setSingleLine(true);
+        timeline.addView(position, new LinearLayout.LayoutParams(dp(54), dp(32)));
         seekBar = new SeekBar(context); seekBar.setMax(1000); seekBar.setContentDescription("播放进度");
-        seekBar.setProgressTintList(ColorStateList.valueOf(0xFFBC9EFF));
+        seekBar.setProgressTintList(ColorStateList.valueOf(0xFFBEA6FF));
+        seekBar.setProgressBackgroundTintList(ColorStateList.valueOf(0x66FFFFFF));
         seekBar.setThumbTintList(ColorStateList.valueOf(Color.WHITE));
         seekBar.setPadding(dp(8), 0, dp(8), 0);
         timeline.addView(seekBar, new LinearLayout.LayoutParams(0, dp(48), 1));
-        timeline.addView(duration, new LinearLayout.LayoutParams(dp(50), dp(32)));
+        timeline.addView(duration, new LinearLayout.LayoutParams(dp(54), dp(32)));
         bottomBar.addView(timeline);
         LinearLayout actions = new LinearLayout(context); actions.setGravity(Gravity.CENTER_VERTICAL);
         playButton = icon("播放", Glyph.PLAY, () -> { host.togglePlayback(); refresh(); });
+        playButton.setBackground(controlBackground(true));
         actions.addView(playButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         speedButton = label("1.0×", "播放速度", host::chooseSpeed);
-        actions.addView(speedButton, new LinearLayout.LayoutParams(dp(64), dp(48)));
-        actions.addView(label("选集", "选集", host::chooseEpisode), new LinearLayout.LayoutParams(dp(48), dp(48)));
-        actions.addView(label("画面", "显示方式", host::chooseDisplay), new LinearLayout.LayoutParams(dp(48), dp(48)));
+        actions.addView(speedButton, new LinearLayout.LayoutParams(dp(72), dp(48)));
+        actions.addView(label("选集", "选集", host::chooseEpisode), new LinearLayout.LayoutParams(dp(52), dp(48)));
+        actions.addView(label("画面", "显示方式", host::chooseDisplay), new LinearLayout.LayoutParams(dp(52), dp(48)));
         actions.addView(new View(context), new LinearLayout.LayoutParams(0, 1, 1));
         fullButton = icon("全屏", Glyph.FULL, host::toggleFullScreen);
+        fullButton.setBackground(controlBackground(true));
         actions.addView(fullButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         bottomBar.addView(actions);
         addView(bottomBar, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
@@ -188,7 +202,7 @@ public final class PlayerOverlay extends FrameLayout {
     public void setTitle(String name, String detail) { title.setText(name); subtitle.setText(detail); }
     public void setFullScreen(boolean value) {
         fullScreen = value;
-        fullButton.setImageDrawable(new ControlIcon(value ? Glyph.EXIT_FULL : Glyph.FULL));
+        fullButton.setImageDrawable(new ControlIcon(value ? Glyph.EXIT_FULL : Glyph.FULL, dp(32)));
         fullButton.setContentDescription(value ? "退出全屏" : "全屏");
         cancelInteraction(); showControls();
     }
@@ -204,7 +218,7 @@ public final class PlayerOverlay extends FrameLayout {
         seekBar.setEnabled(seekable);
         seekBar.setAlpha(seekable ? 1f : .45f);
         playButton.setEnabled(host.hasPlayer());
-        playButton.setImageDrawable(new ControlIcon(host.isPlaying() ? Glyph.PAUSE : Glyph.PLAY));
+        playButton.setImageDrawable(new ControlIcon(host.isPlaying() ? Glyph.PAUSE : Glyph.PLAY, dp(32)));
         playButton.setContentDescription(host.isPlaying() ? "暂停" : "播放");
         speedButton.setText(speedText(host.speed()));
         duration.setText(length > 0 ? time(length) : "--:--");
@@ -319,18 +333,35 @@ public final class PlayerOverlay extends FrameLayout {
     private void showFeedback(String value) { handler.removeCallbacks(hideFeedback); feedback.setText(value); feedback.setVisibility(VISIBLE); }
     private void dismissFeedbackSoon() { handler.removeCallbacks(hideFeedback); handler.postDelayed(hideFeedback, 1000); }
     private ImageButton icon(String description, Glyph glyph, Runnable action) {
-        ImageButton button = new ImageButton(getContext()); button.setImageDrawable(new ControlIcon(glyph));
-        button.setContentDescription(description); button.setBackground(ripple()); button.setPadding(dp(12), dp(12), dp(12), dp(12));
+        ImageButton button = new ImageButton(getContext());
+        // ImageButton's default CENTER uses intrinsic pixels: 24px was only 8dp
+        // on xxhdpi phones. Both the intrinsic size and the content box use dp.
+        button.setImageDrawable(new ControlIcon(glyph, dp(32)));
+        button.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        button.setContentDescription(description); button.setBackground(controlBackground(false));
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
         button.setOnClickListener(v -> { action.run(); if (active) showControls(); }); return button;
     }
     private Button label(String value, String description, Runnable action) {
-        Button button = new Button(getContext()); button.setText(value); button.setTextColor(Color.WHITE); button.setTextSize(13);
+        Button button = new Button(getContext()); button.setText(value); button.setTextColor(Color.WHITE); button.setTextSize(14);
+        button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL)); button.setIncludeFontPadding(false);
+        button.setSingleLine(true);
         button.setAllCaps(false); button.setMinWidth(0); button.setMinimumWidth(0); button.setMinHeight(0); button.setMinimumHeight(0);
-        button.setPadding(0, 0, 0, 0); button.setContentDescription(description); button.setBackground(ripple());
+        button.setPadding(0, 0, 0, 0); button.setContentDescription(description); button.setBackground(controlBackground(false));
         button.setOnClickListener(v -> { action.run(); if (active) showControls(); }); return button;
     }
-    private Drawable ripple() { return new RippleDrawable(ColorStateList.valueOf(0x55FFFFFF), null, new android.graphics.drawable.ColorDrawable(Color.WHITE)); }
-    private TextView text(String value, float size) { TextView view = new TextView(getContext()); view.setText(value); view.setTextSize(size); view.setTextColor(Color.WHITE); return view; }
+    private Drawable controlBackground(boolean emphasized) {
+        GradientDrawable plate = new GradientDrawable();
+        plate.setColor(emphasized ? 0x50A890ED : 0x24101420);
+        plate.setCornerRadius(dp(10));
+        plate.setStroke(dp(1), emphasized ? 0x60D7C9FF : 0x2AFFFFFF);
+        GradientDrawable mask = new GradientDrawable(); mask.setColor(Color.WHITE); mask.setCornerRadius(dp(10));
+        return new InsetDrawable(new RippleDrawable(ColorStateList.valueOf(0x55FFFFFF), plate, mask), dp(3), dp(7), dp(3), dp(7));
+    }
+    private TextView text(String value, float size) {
+        TextView view = new TextView(getContext()); view.setText(value); view.setTextSize(size); view.setTextColor(Color.WHITE);
+        view.setIncludeFontPadding(false); view.setShadowLayer(dp(1), 0, dp(1), 0xB3000000); return view;
+    }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private static String speedText(float speed) { return String.format(Locale.ROOT, "%s×", speed); }
     private static String time(long ms) {
@@ -343,7 +374,12 @@ public final class PlayerOverlay extends FrameLayout {
     private static final class ControlIcon extends Drawable {
         private final Glyph glyph;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        ControlIcon(Glyph glyph) { this.glyph = glyph; paint.setColor(Color.WHITE); paint.setStrokeWidth(2); paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND); }
+        private final int intrinsicSize;
+        ControlIcon(Glyph glyph, int intrinsicSize) {
+            this.glyph = glyph; this.intrinsicSize = intrinsicSize;
+            paint.setColor(Color.WHITE); paint.setStrokeWidth(2.2f);
+            paint.setStrokeCap(Paint.Cap.ROUND); paint.setStrokeJoin(Paint.Join.ROUND);
+        }
         @Override public void draw(Canvas canvas) {
             int checkpoint = canvas.save();
             canvas.translate(getBounds().left, getBounds().top);
@@ -351,9 +387,9 @@ public final class PlayerOverlay extends FrameLayout {
             paint.setStyle(Paint.Style.STROKE);
             Path path = new Path();
             switch (glyph) {
-                case PLAY: paint.setStyle(Paint.Style.FILL); path.moveTo(7, 4); path.lineTo(21, 12); path.lineTo(7, 20); path.close(); break;
-                case PAUSE: paint.setStyle(Paint.Style.FILL); canvas.drawRect(6, 4, 10, 20, paint); canvas.drawRect(14, 4, 18, 20, paint); break;
-                case BACK: path.moveTo(15, 4); path.lineTo(7, 12); path.lineTo(15, 20); break;
+                case PLAY: paint.setStyle(Paint.Style.FILL); path.moveTo(6, 2); path.lineTo(22, 12); path.lineTo(6, 22); path.close(); break;
+                case PAUSE: paint.setStyle(Paint.Style.FILL); canvas.drawRoundRect(5, 2, 10, 22, 1, 1, paint); canvas.drawRoundRect(14, 2, 19, 22, 1, 1, paint); break;
+                case BACK: path.moveTo(16, 3); path.lineTo(7, 12); path.lineTo(16, 21); break;
                 case HOME: path.moveTo(3, 11); path.lineTo(12, 3); path.lineTo(21, 11); path.moveTo(6, 10); path.lineTo(6, 21); path.lineTo(10, 21); path.lineTo(10, 15); path.lineTo(14, 15); path.lineTo(14, 21); path.lineTo(18, 21); path.lineTo(18, 10); break;
                 case FULL:
                     path.moveTo(9, 3); path.lineTo(3, 3); path.lineTo(3, 9); path.moveTo(15, 3); path.lineTo(21, 3); path.lineTo(21, 9);
@@ -367,7 +403,7 @@ public final class PlayerOverlay extends FrameLayout {
         @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); invalidateSelf(); }
         @Override public void setColorFilter(ColorFilter filter) { paint.setColorFilter(filter); invalidateSelf(); }
         @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
-        @Override public int getIntrinsicWidth() { return 24; }
-        @Override public int getIntrinsicHeight() { return 24; }
+        @Override public int getIntrinsicWidth() { return intrinsicSize; }
+        @Override public int getIntrinsicHeight() { return intrinsicSize; }
     }
 }

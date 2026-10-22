@@ -289,6 +289,89 @@ public class MainNavigationTest {
         assertFalse(playback.released);
     }
 
+    @Test public void offlineSeriesKeepsItsGroupDuringRefreshAndBackReturnsThroughTheCatalogue() throws Exception {
+        Models.Quality quality = DownloadCatalogueTest.quality(80, "7", "30280");
+        store.saveDownload(MediaRepository.key(episode, quality), episode, quality);
+        click("离线下载");
+        MediaRepository repository = (MediaRepository) get("media");
+        DownloadCatalogue.Group group = DownloadCatalogue.groups(repository.downloads()).get(0);
+        invoke("openDownloadGroup", new Class<?>[]{DownloadCatalogue.Group.class}, group);
+        invoke("renderDownloads", new Class<?>[]{});
+        assertEquals(group.id, get("downloadGroupId"));
+
+        activity.onBackPressed();
+
+        assertNull(get("downloadGroupId"));
+        assertTrue((Boolean) get("downloadsPage"));
+        assertFalse(activity.isFinishing());
+        assertNotNull(findText((View) get("content"), "离线下载"));
+        activity.onBackPressed();
+        assertHome();
+    }
+
+    @Test public void confirmedDeletionUsesItsVersionSnapshotAndPreservesOtherVersionsAndHistory() throws Exception {
+        Models.Quality selectedQuality = DownloadCatalogueTest.quality(80, "7", "30280");
+        Models.Quality otherQuality = DownloadCatalogueTest.quality(112, "7", "30280");
+        Models.Episode otherEpisode = DownloadCatalogueTest.episode(series.id, series.title, "another-episode", 2);
+        String selectedKey = MediaRepository.key(episode, selectedQuality);
+        String otherQualityKey = MediaRepository.key(episode, otherQuality);
+        String otherEpisodeKey = MediaRepository.key(otherEpisode, selectedQuality);
+        store.saveDownload(selectedKey, episode, selectedQuality);
+        store.saveDownload(otherQualityKey, episode, otherQuality);
+        store.saveDownload(otherEpisodeKey, otherEpisode, selectedQuality);
+        store.saveProgress(episode, 98000, 300000);
+        click("离线下载");
+        MediaRepository repository = (MediaRepository) get("media");
+        MediaRepository.OfflineItem selected = null;
+        for (MediaRepository.OfflineItem item : repository.downloads()) if (selectedKey.equals(item.key)) selected = item;
+        assertNotNull(selected);
+        int before = (Integer) get("downloadMutationGeneration");
+        invoke("confirmRemoveDownloads", new Class<?>[]{java.util.List.class}, java.util.Collections.singletonList(selected));
+        AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
+
+        // A new version appears after confirmation is opened; it was not selected for deletion.
+        Models.Quality newlyAdded = DownloadCatalogueTest.quality(64, "7", "30280");
+        String newlyAddedKey = MediaRepository.key(episode, newlyAdded);
+        store.saveDownload(newlyAddedKey, episode, newlyAdded);
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+        org.robolectric.Shadows.shadowOf(Looper.getMainLooper()).idle();
+
+        java.util.Set<String> remaining = new java.util.HashSet<>();
+        for (MediaRepository.OfflineItem item : repository.downloads()) remaining.add(item.key);
+        assertEquals(new java.util.HashSet<>(java.util.Arrays.asList(otherQualityKey, otherEpisodeKey, newlyAddedKey)), remaining);
+        assertEquals(98000, store.getProgress(episode.id).positionMs);
+        assertEquals(episode.id, store.getLastEpisode(series.id));
+        assertTrue((Integer) get("downloadMutationGeneration") > before);
+    }
+
+    @Test public void activityPauseCancelsBatchPreparationAndItsLateSuccessCannotEnqueue() throws Exception {
+        Models.Quality profile = DownloadCatalogueTest.quality(80, "7", "30280");
+        java.util.ArrayDeque<Runnable> scheduled = new java.util.ArrayDeque<>();
+        BatchDownloadSession.Result[] pending = new BatchDownloadSession.Result[1];
+        java.util.concurrent.atomic.AtomicInteger enqueued = new java.util.concurrent.atomic.AtomicInteger();
+        BatchDownloadSession session = new BatchDownloadSession(java.util.Collections.singletonList(episode), profile,
+            new BatchDownloadSession.Gateway() {
+                @Override public MediaRepository.OfflineItem existing(Models.Episode e, Models.Quality q) { return null; }
+                @Override public void resolve(Models.Episode e, BatchDownloadSession.Result callback) { pending[0] = callback; }
+                @Override public void enqueue(Models.Episode e, Models.Quality q) { enqueued.incrementAndGet(); }
+            }, scheduled::addLast, new BatchDownloadSession.Listener() {
+                @Override public void changed(BatchDownloadSession job) { }
+                @Override public void finished(BatchDownloadSession job) { }
+            });
+        set("batchSession", session);
+        session.start();
+        scheduled.removeFirst().run();
+        assertNotNull(pending[0]);
+
+        controller.pause();
+        pending[0].success(java.util.Collections.singletonList(profile));
+        controller.resume();
+
+        assertTrue(session.isCancelled());
+        assertNull(get("batchSession"));
+        assertEquals(0, enqueued.get());
+    }
+
     private void attachPlayback(int state, long position, boolean wasReady) throws Exception {
         playback = new FakePlayback(state, position, 300000);
         set("player", playback.player);

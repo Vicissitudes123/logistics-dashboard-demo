@@ -92,6 +92,10 @@ public final class Models {
         public String id = "";
         public String label = "";
         public int qn;
+        /** Stream metadata reported by the API; zero/empty means unavailable in old records. */
+        public int width, height;
+        public long bandwidth;
+        public String codecs = "";
         public String videoUrl = "";
         /** Empty for a single file that already contains both audio and video. */
         public String audioUrl = "";
@@ -112,6 +116,7 @@ public final class Models {
             List<String> videos = videoCandidates();
             List<String> audios = audioCandidates();
             return new JSONObject().put("id", id).put("label", label).put("qn", qn)
+                    .put("width", width).put("height", height).put("bandwidth", bandwidth).put("codecs", codecs)
                     .put("videoUrl", first(videos)).put("audioUrl", first(audios))
                     .put("videoUrls", new JSONArray(videos)).put("audioUrls", new JSONArray(audios))
                     .put("headers", headerJson);
@@ -123,6 +128,10 @@ public final class Models {
             quality.id = json.optString("id", "");
             quality.label = json.optString("label", "");
             quality.qn = json.optInt("qn", 0);
+            quality.width = Math.max(0, json.optInt("width", 0));
+            quality.height = Math.max(0, json.optInt("height", 0));
+            quality.bandwidth = Math.max(0, json.optLong("bandwidth", 0));
+            quality.codecs = json.optString("codecs", "");
             quality.videoUrl = json.optString("videoUrl", "");
             quality.audioUrl = json.optString("audioUrl", "");
             quality.videoUrls = candidates(quality.videoUrl, strings(json.optJSONArray("videoUrls")));

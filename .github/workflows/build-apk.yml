@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 env:
-  EXPECTED_APK_VERSION: '0.1.3'
-  EXPECTED_APK_VERSION_CODE: '4'
+  EXPECTED_APK_VERSION: '0.1.4'
+  EXPECTED_APK_VERSION_CODE: '5'
   EXPECTED_APK_CERTIFICATE_SHA256: '0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c'
 
 jobs:
@@ -122,7 +122,7 @@ jobs:
           if-no-files-found: error
 
   deliver:
-    name: Publish verified APK download
+    name: Publish verified APK and installation ZIP
     needs: build
     if: github.ref == 'refs/heads/anime-shelf-apk'
     runs-on: ubuntu-latest
@@ -160,16 +160,18 @@ jobs:
       - name: Install APK verification tools
         run: sdkmanager 'build-tools;35.0.0'
       - name: Verify downloaded APK and write public download files
+        id: delivery_files
         shell: bash
         run: |
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs verified-build/outputs/apk/debug/app-debug.apk > verified-build/apk-signature-checked.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging verified-build/outputs/apk/debug/app-debug.apk > verified-build/apk-info-checked.txt
           python3 - <<'PY'
-          import hashlib, os, pathlib, re, shutil
+          import hashlib, os, pathlib, re, zipfile
           folder = pathlib.Path('verified-build')
           apk = folder / 'outputs/apk/debug/app-debug.apk'
-          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
-          size = str(apk.stat().st_size)
+          payload = apk.read_bytes()
+          digest = hashlib.sha256(payload).hexdigest()
+          size = str(len(payload))
           if digest != os.environ['BUILD_APK_SHA256'] or size != os.environ['BUILD_APK_SIZE']:
               raise SystemExit('Downloaded APK bytes do not match the build job output')
           info = (folder / 'apk-info-checked.txt').read_text()
@@ -192,26 +194,52 @@ jobs:
               raise SystemExit('Downloaded APK identity or certificate does not match the verified build')
           target = pathlib.Path('downloads') / f'anime-shelf-{version}.apk'
           target.parent.mkdir(exist_ok=True)
-          shutil.copyfile(apk, target)
+          target.write_bytes(payload)
+          if target.stat().st_size != len(payload) or hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+              raise SystemExit('Public APK bytes do not match the verified build')
           target.with_suffix('.apk.sha256').write_text(f'{digest}  {target.name}\n')
+          archive_target = target.with_name(f'anime-shelf-{version}-install.zip')
+          entry = zipfile.ZipInfo(target.name, date_time=(1980, 1, 1, 0, 0, 0))
+          # Store the already compressed APK unchanged, with reproducible metadata.
+          entry.compress_type = zipfile.ZIP_STORED
+          entry.create_system = 3
+          entry.external_attr = 0o100644 << 16
+          with zipfile.ZipFile(archive_target, 'w') as archive:
+              archive.writestr(entry, payload)
+          with zipfile.ZipFile(archive_target) as archive:
+              if archive.namelist() != [target.name] or archive.testzip() is not None:
+                  raise SystemExit('Installation ZIP has unexpected entries or a CRC failure')
+              contained_apk = archive.read(target.name)
+              if len(contained_apk) != len(payload) or hashlib.sha256(contained_apk).hexdigest() != digest:
+                  raise SystemExit('APK bytes changed inside the installation ZIP')
+          archive_digest = hashlib.sha256(archive_target.read_bytes()).hexdigest()
+          archive_target.with_suffix('.zip.sha256').write_text(f'{archive_digest}  {archive_target.name}\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'zip_sha256={archive_digest}\n')
+              output.write(f'zip_size={archive_target.stat().st_size}\n')
           print(f'Verified {target}: {size} bytes, SHA-256 {digest}, certificate {certificate}')
+          print(f'Verified {archive_target}: {archive_target.stat().st_size} bytes, SHA-256 {archive_digest}')
           PY
-      - name: Commit only the verified APK and checksum
+      - name: Commit only the verified APK, ZIP and their checksums
         shell: bash
         run: |
           git merge-base --is-ancestor "$BUILD_SOURCE_SHA" HEAD
           git diff --exit-code "$BUILD_SOURCE_SHA" HEAD -- . ':(exclude)downloads/**'
-          git add -- "downloads/anime-shelf-${BUILD_APK_VERSION}.apk" "downloads/anime-shelf-${BUILD_APK_VERSION}.apk.sha256"
+          git add -- "downloads/anime-shelf-${BUILD_APK_VERSION}.apk" "downloads/anime-shelf-${BUILD_APK_VERSION}.apk.sha256" "downloads/anime-shelf-${BUILD_APK_VERSION}-install.zip" "downloads/anime-shelf-${BUILD_APK_VERSION}-install.zip.sha256"
           if git diff --cached --quiet; then
-            echo 'The verified APK download is already current.'
+            echo 'The verified APK and ZIP downloads are already current.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m "Publish verified Anime Shelf ${BUILD_APK_VERSION} APK [skip ci]"
+          git commit -m "Publish verified Anime Shelf ${BUILD_APK_VERSION} APK and ZIP [skip ci]"
           git push origin HEAD:anime-shelf-apk
-      - name: Report direct download
+      - name: Report APK and ZIP downloads
         shell: bash
+        env:
+          ZIP_SHA256: ${{ steps.delivery_files.outputs.zip_sha256 }}
         run: |
+          echo "ZIP: https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-${BUILD_APK_VERSION}-install.zip" >> "$GITHUB_STEP_SUMMARY"
+          echo "ZIP SHA-256: $ZIP_SHA256" >> "$GITHUB_STEP_SUMMARY"
           echo "APK: https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-${BUILD_APK_VERSION}.apk" >> "$GITHUB_STEP_SUMMARY"
-          echo "SHA-256: $BUILD_APK_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK SHA-256: $BUILD_APK_SHA256" >> "$GITHUB_STEP_SUMMARY"

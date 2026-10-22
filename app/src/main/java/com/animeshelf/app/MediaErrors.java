@@ -1,18 +1,29 @@
 package com.animeshelf.app;
 
 import androidx.media3.common.PlaybackException;
+import androidx.media3.common.ParserException;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.HttpDataSource;
 import java.io.IOException;
+import java.io.EOFException;
+import java.io.FileNotFoundException;
+import java.io.InterruptedIOException;
 import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.ProtocolException;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
+import java.security.cert.CertificateException;
+import java.security.cert.CertPathValidatorException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.SSLPeerUnverifiedException;
 
 /** Diagnostics that never include signed URLs, response bodies or account credentials. */
 @UnstableApi
@@ -31,7 +42,7 @@ public final class MediaErrors {
         if (count > 1) detail.append("（已尝试 ").append(count).append(" 个地址）");
         for (int i = 0; i < count; i++) {
             String host = i < hosts.size() ? safeHost(hosts.get(i)) : "未知主机";
-            detail.append('\n').append(host).append(" · ").append(reason(failures.get(i)));
+            detail.append('\n').append(host).append(" · ").append(typedReason(failures.get(i)));
         }
         detail.append("\n可先刷新地址重试；若仍失败，请复制这些详情反馈。");
         return new TransportFailure(detail.toString(), failures.isEmpty() ? null : failures.get(failures.size() - 1));
@@ -52,16 +63,38 @@ public final class MediaErrors {
         for (Throwable cause : causes) {
             if (cause instanceof BiliClient.ClientException) return cause.getMessage();
         }
-        String reason = reason(error);
-        if (!"网络读取失败".equals(reason)) return reason + "，请检查网络后重试。";
+        String playbackCode = "";
         for (Throwable cause : causes) {
             if (cause instanceof PlaybackException) {
                 String code = ((PlaybackException) cause).getErrorCodeName();
                 if (code.startsWith("ERROR_CODE_DECOD")) return "设备无法解码这一格式，请尝试 AVC 或其他清晰度。\n" + code;
-                return "播放未能继续，请重新选择这一集或检查本地文件。\n" + code;
+                if (code.matches("ERROR_CODE_[A-Z0-9_]+")) playbackCode = code;
+                break;
             }
         }
-        return "请求未能完成，请重试。未取得具体 HTTP 状态。";
+        String host = "";
+        for (Throwable cause : causes) {
+            if (cause instanceof HttpDataSource.HttpDataSourceException) {
+                HttpDataSource.HttpDataSourceException http = (HttpDataSource.HttpDataSourceException) cause;
+                if (http.dataSpec != null) host = safeHost(http.dataSpec.uri.getHost());
+                break;
+            }
+        }
+        String type = ioType(error);
+        if (!type.isEmpty()) {
+            return "媒体读取失败\n" + (host.isEmpty() ? "" : host + " · ") + typedReason(error)
+                + "\n未取得具体 HTTP 状态；不能据此判断清晰度缺失。请刷新地址或重试。"
+                + (playbackCode.isEmpty() ? "" : "\n" + playbackCode);
+        }
+        return "请求未能完成，请重试。未取得具体 HTTP 状态。"
+            + (playbackCode.isEmpty() ? "" : "\n" + playbackCode);
+    }
+
+    private static String typedReason(Throwable error) {
+        String detail = reason(error);
+        if (detail.startsWith("HTTP ")) return detail;
+        String type = ioType(error);
+        return detail + (type.isEmpty() ? "" : "（" + type + "）");
     }
 
     private static String reason(Throwable error) {
@@ -69,12 +102,39 @@ public final class MediaErrors {
         for (Throwable cause : causes) if (cause instanceof HttpDataSource.InvalidResponseCodeException)
             return httpReason(((HttpDataSource.InvalidResponseCodeException) cause).responseCode);
         for (Throwable cause : causes) {
+            if (cause instanceof CertificateException || cause instanceof CertPathValidatorException
+                || cause instanceof SSLPeerUnverifiedException) return "HTTPS 连接失败：证书或主机身份校验失败";
+        }
+        for (int i = causes.size() - 1; i >= 0; i--) {
+            Throwable cause = causes.get(i);
             if (cause instanceof UnknownHostException) return "域名解析失败";
             if (cause instanceof SocketTimeoutException) return "连接或读取超时";
+            if (cause instanceof SSLHandshakeException) return "HTTPS 连接失败：TLS 握手失败";
             if (cause instanceof SSLException) return "HTTPS 连接失败";
             if (cause instanceof ConnectException) return "无法连接服务器";
+            if (cause instanceof NoRouteToHostException) return "无法到达媒体服务器";
+            if (cause instanceof EOFException) return "媒体数据提前结束，未读到完整内容";
+            if (cause instanceof SocketException) return "网络连接异常或中断";
+            if (cause instanceof ProtocolException) return "媒体服务器响应协议异常";
+            if (cause instanceof InterruptedIOException) return "媒体读取被中断";
+            if (cause instanceof FileNotFoundException) return "媒体或缓存文件无法打开";
+            if (cause instanceof ParserException) return "媒体容器或数据解析失败";
+            if (cause instanceof HttpDataSource.InvalidContentTypeException) return "服务器返回了不支持的媒体内容类型";
         }
         return "网络读取失败";
+    }
+
+    private static String ioType(Throwable error) {
+        String name = "";
+        for (Throwable cause : causes(error)) {
+            if (cause instanceof IOException) {
+                // Class names are local program metadata; never use exception messages,
+                // response bodies or signed request addresses to enrich this diagnostic.
+                String candidate = cause.getClass().getSimpleName();
+                if (candidate.matches("[A-Za-z][A-Za-z0-9_$]{0,79}")) name = candidate;
+            }
+        }
+        return name;
     }
 
     private static String httpReason(int code) {

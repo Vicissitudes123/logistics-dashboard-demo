@@ -7,10 +7,14 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DataSpec;
 import androidx.media3.datasource.HttpDataSource;
 import java.io.IOException;
+import java.io.EOFException;
+import java.net.ProtocolException;
+import java.net.SocketException;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.security.cert.CertificateException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -112,6 +116,45 @@ public class MediaErrorsTest {
         assertTrue(description, description.contains("设备无法解码"));
         assertTrue(description, description.contains("AVC"));
         assertFalse(description, description.contains("HTTP 403"));
+        assertSafe(description);
+    }
+
+    @Test public void unspecifiedIoPreservesEarlyEofTypeWithoutGuessingMissingResolution() {
+        PlaybackException error = new PlaybackException(PRIVATE,
+            new IOException(PRIVATE, new EOFException("https://private.example/?token=" + PRIVATE)),
+            PlaybackException.ERROR_CODE_IO_UNSPECIFIED);
+        String description = MediaErrors.describe(error);
+        assertTrue(description, description.contains("提前结束"));
+        assertTrue(description, description.contains("EOFException"));
+        assertTrue(description, description.contains("ERROR_CODE_IO_UNSPECIFIED"));
+        assertTrue(description, description.contains("不能据此判断清晰度缺失"));
+        assertSafe(description);
+    }
+
+    @Test public void nonHttpTransportFailuresKeepTrackHostAndExceptionType() {
+        Throwable[] failures = {new SocketException(PRIVATE), new EOFException(PRIVATE),
+            new ProtocolException(PRIVATE), new IOException(PRIVATE)};
+        String[] descriptions = {"网络连接异常", "提前结束", "响应协议异常", "网络读取失败"};
+        for (int i = 0; i < failures.length; i++) {
+            String description = MediaErrors.describe(MediaErrors.transportFailure("音轨",
+                Collections.singletonList(new IOException(PRIVATE, failures[i])),
+                Collections.singletonList("audio.example.test")));
+            assertTrue(description, description.contains("音轨"));
+            assertTrue(description, description.contains("audio.example.test"));
+            assertTrue(description, description.contains(failures[i].getClass().getSimpleName()));
+            assertTrue(description, description.contains(descriptions[i]));
+            assertSafe(description);
+        }
+    }
+
+    @Test public void certificateFailureIsDistinguishedFromGenericTlsHandshake() {
+        SSLHandshakeException handshake = new SSLHandshakeException(PRIVATE);
+        handshake.initCause(new CertificateException(PRIVATE));
+        String description = MediaErrors.describe(MediaErrors.transportFailure("视频",
+            Collections.singletonList(handshake), Collections.singletonList("tls.example.test")));
+        assertTrue(description, description.contains("证书或主机身份校验失败"));
+        assertTrue(description, description.contains("SSLHandshakeException"));
+        assertTrue(description, description.contains("tls.example.test"));
         assertSafe(description);
     }
 

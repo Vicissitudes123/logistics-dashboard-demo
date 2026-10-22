@@ -1,11 +1,13 @@
 package com.animeshelf.app;
 
 import android.net.Uri;
+import androidx.media3.common.C;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DataSpec;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.datasource.TransferListener;
+import java.io.EOFException;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -66,6 +68,7 @@ public final class MediaHttpDataSource implements DataSource {
     private DataSource upstream;
     private String trackLabel = "媒体";
     private String openedHost = "";
+    private long bytesRemaining = C.LENGTH_UNSET;
 
     MediaHttpDataSource(Resolver resolver, DataSource.Factory upstreamFactory) {
         this.resolver = resolver;
@@ -90,6 +93,7 @@ public final class MediaHttpDataSource implements DataSource {
         List<String> candidates = candidates(request.urls);
         Map<String, String> headers = headers(request.headers, dataSpec.httpRequestHeaders);
         trackLabel = request.trackLabel;
+        bytesRemaining = C.LENGTH_UNSET;
         List<Throwable> failures = new ArrayList<>();
         List<String> hosts = new ArrayList<>();
         for (String candidate : candidates) {
@@ -100,10 +104,14 @@ public final class MediaHttpDataSource implements DataSource {
             DataSpec attempt = dataSpec.buildUpon().setUri(candidate)
                 .setHttpRequestHeaders(headers).build();
             try {
-                return upstream.open(attempt);
+                long length = upstream.open(attempt);
+                // For a bounded request, open() may return the requested length even when
+                // the resource ends sooner. Only an unbounded request resolves its true size.
+                bytesRemaining = attempt.length == C.LENGTH_UNSET ? length : C.LENGTH_UNSET;
+                return length;
             } catch (IOException failure) {
                 failures.add(failure);
-                hosts.add(openedHost);
+                hosts.add(currentHost());
                 try {
                     upstream.close();
                 } catch (IOException ignored) {
@@ -123,7 +131,14 @@ public final class MediaHttpDataSource implements DataSource {
     @Override public int read(byte[] buffer, int offset, int length) throws IOException {
         if (upstream == null) throw new IllegalStateException("媒体连接尚未打开");
         try {
-            return upstream.read(buffer, offset, length);
+            int count = upstream.read(buffer, offset, length);
+            // A truncated response can otherwise look like a clean end to the cache, with
+            // the eventual parser EOF losing both the failing track and its CDN host.
+            if (count == C.RESULT_END_OF_INPUT && bytesRemaining > 0)
+                throw new EOFException("媒体响应在预期字节数之前结束");
+            if (count > 0 && bytesRemaining != C.LENGTH_UNSET)
+                bytesRemaining = Math.max(0, bytesRemaining - count);
+            return count;
         } catch (IOException failure) {
             // Media3 owns read retries and the current byte offset. Reopening here could replay
             // bytes into a partially written cache span and corrupt a supposedly complete file.
@@ -151,6 +166,7 @@ public final class MediaHttpDataSource implements DataSource {
         } finally {
             upstream = null;
             openedHost = "";
+            bytesRemaining = C.LENGTH_UNSET;
         }
     }
 

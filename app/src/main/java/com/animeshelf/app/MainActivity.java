@@ -45,6 +45,9 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.concurrent.Callable;
@@ -82,6 +85,10 @@ public final class MainActivity extends Activity {
     private int selectionToken, taskStatusToken;
     private float zoom = 1f;
     private long lastRender, requestedResumeMs;
+    private String downloadGroupId, downloadGroupTitle = "";
+    private int downloadMutationGeneration;
+    private BatchDownloadSession batchSession;
+    private AlertDialog batchDialog;
 
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
@@ -230,6 +237,7 @@ public final class MainActivity extends Activity {
 
     private void renderLibrary() {
         closePlayback();
+        downloadGroupId = null;
         currentSeries = null;
         downloadsPage = false; seriesPage = false; content.removeAllViews();
         scroll.scrollTo(0, 0);
@@ -273,13 +281,16 @@ public final class MainActivity extends Activity {
         downloadsPage = false; seriesPage = true; currentSeries = series; content.removeAllViews();
         content.addView(button("‹  回到首页", false, v -> renderLibrary()));
         title(series.title, series.episodes.size() + " 集  ·  点击剧集选择播放或下载");
+        boolean hasOnlineEpisodes = false;
+        for (Models.Episode item : series.episodes) if (item.localUri == null || item.localUri.isEmpty()) hasOnlineEpisodes = true;
+        if (hasOnlineEpisodes) content.addView(button("批量下载", true, v -> chooseBatchEpisodes(series)), gapLayout());
         String lastId = store.getLastEpisode(series.id);
         Models.Episode resume = findEpisode(series, lastId);
         if (resume != null) {
             Store.Progress p = store.getProgress(resume.id);
             content.addView(button("继续第 " + resume.index + " 集 · " + time(p.positionMs), true, v -> selectEpisode(resume)), gapLayout());
         }
-        for (Models.Episode episode : series.episodes) {
+        for (Models.Episode episode : DownloadCatalogue.episodes(series.episodes)) {
             LinearLayout card = card(); card.setPadding(dp(14), dp(12), dp(14), dp(12));
             LinearLayout line = row();
             TextView num = text(String.format(Locale.ROOT, "%02d", episode.index), 22, PURPLE);
@@ -462,6 +473,7 @@ public final class MainActivity extends Activity {
     }
 
     private void closePlayback() {
+        cancelBatchDownloads();
         ++selectionToken;
         ++taskStatusToken;
         status.setVisibility(View.GONE);
@@ -551,14 +563,32 @@ public final class MainActivity extends Activity {
 
     private void chooseDisplayMenu() {
         new AlertDialog.Builder(this).setTitle("画面显示")
-            .setItems(new String[]{"适应画面", "铺满画面（裁切边缘）", "缩小 −", "放大 ＋", "恢复 100%"}, (dialog, index) -> {
+            .setItems(new String[]{"适应画面", "铺满画面（裁切边缘）", "缩小 −", "放大 ＋", "恢复 100%", "视频信息 / HDR"}, (dialog, index) -> {
                 if (index == 0 || index == 1) {
                     zoom = 1; applyZoom();
                     playerView.setResizeMode(index == 0 ? AspectRatioFrameLayout.RESIZE_MODE_FIT : AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
                 } else if (index == 2) setZoom(zoom - .25f);
                 else if (index == 3) setZoom(zoom + .25f);
-                else setZoom(1);
+                else if (index == 4) setZoom(1);
+                else showVideoInformation();
             }).setNegativeButton("关闭", null).show();
+    }
+
+    private void showVideoInformation() {
+        String detail = VideoDiagnostics.describe(player == null ? null : player.getVideoFormat(),
+            playerView.getDisplay(), playerView.getVideoSurfaceView(), currentQuality == null ? null : currentQuality.label);
+        if (currentQuality != null && currentQuality.bandwidth > 0)
+            detail += "\n平台标称视频码率：" + VideoDiagnostics.formatBitrate(currentQuality.bandwidth) + "（非实时测量）";
+        detail += "\n\n离线下载保留平台媒体数据，番匣不额外转码压缩。";
+        final String diagnostic = detail;
+        ScrollView box = new ScrollView(this);
+        TextView text = text(detail, 14, TEXT); text.setTextIsSelectable(true); text.setPadding(dp(20), dp(12), dp(20), dp(16));
+        box.addView(text);
+        new AlertDialog.Builder(this).setTitle("视频信息").setView(box).setPositiveButton("关闭", null)
+            .setNeutralButton("复制信息", (d, w) -> {
+                ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (clipboard != null) { clipboard.setPrimaryClip(ClipData.newPlainText("视频信息", diagnostic)); notice("已复制视频信息"); }
+            }).show();
     }
 
     private void setZoom(float value) { zoom = Math.max(.5f, Math.min(3f, value)); applyZoom(); notice("画面缩放 " + Math.round(zoom * 100) + "%"); }
@@ -611,6 +641,7 @@ public final class MainActivity extends Activity {
     }
     @Override public void onBackPressed() {
         if (fullScreen) { setFullScreen(false); return; }
+        if (downloadsPage && downloadGroupId != null) { downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0); return; }
         if (player != null || playerPanel.getVisibility() == View.VISIBLE || seriesPage || downloadsPage) { renderLibrary(); return; }
         super.onBackPressed();
     }
@@ -655,54 +686,306 @@ public final class MainActivity extends Activity {
 
     private void openDownloads() {
         closePlayback();
+        downloadGroupId = null;
+        renderDownloads();
+        scroll.scrollTo(0, 0);
+    }
+
+    private void openDownloadGroup(DownloadCatalogue.Group group) {
+        downloadGroupId = group.id;
+        downloadGroupTitle = group.title;
         renderDownloads();
         scroll.scrollTo(0, 0);
     }
 
     private void renderDownloads() {
-        downloadsPage = true; seriesPage = false; lastRender = System.currentTimeMillis(); content.removeAllViews();
-        title("离线下载", "完整下载后，即可在无网络时播放");
+        downloadsPage = true; seriesPage = false; lastRender = System.currentTimeMillis();
+        int previousScroll = scroll.getScrollY();
+        content.removeAllViews();
         List<MediaRepository.OfflineItem> entries = media.downloads();
-        if (entries.isEmpty()) { empty("还没有下载任务", "进入一部番剧，选择剧集和清晰度，\n即可加入下载队列。", "去番剧库", this::renderLibrary); return; }
-        for (MediaRepository.OfflineItem entry : entries) {
-            LinearLayout card = card();
-            TextView name = text(entry.episode.seriesTitle + " · 第 " + entry.episode.index + " 集", 16, TEXT);
-            name.setTypeface(null, Typeface.BOLD); card.addView(name);
-            card.addView(text(entry.quality.label + "  ·  " + entry.status, 12, AQUA));
-            final String diagnostic = entry.errorDetail == null || entry.errorDetail.trim().isEmpty()
-                ? "此任务尚未记录具体错误。请重新解析重试，失败后可查看新的诊断。" : entry.errorDetail;
-            if (entry.failed) {
-                TextView detail = text(diagnostic, 12, MUTED);
-                detail.setMaxLines(3);
-                detail.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                detail.setPadding(0, dp(5), 0, dp(5));
-                card.addView(detail);
+        List<DownloadCatalogue.Group> groups = DownloadCatalogue.groups(entries);
+        DownloadCatalogue.Group selected = null;
+        for (DownloadCatalogue.Group group : groups) if (group.id.equals(downloadGroupId)) selected = group;
+        if (downloadGroupId == null) {
+            title("离线下载", groups.size() + " 部番剧 · 完整下载后可断网播放");
+            if (entries.isEmpty()) {
+                empty("还没有下载任务", "进入一部番剧，点击「批量下载」，\n或为单集选择清晰度下载。", "去番剧库", this::renderLibrary);
+                return;
             }
-            if (entry.percent >= 0 && !entry.complete) card.addView(text(String.format(Locale.CHINA, "%.0f%%", entry.percent), 12, MUTED));
-            LinearLayout actions = row();
-            if (entry.complete) addEqual(actions, button("离线播放", true, v -> play(entry.episode, entry.quality, true)));
-            else if (entry.failed) addEqual(actions, button("重新解析重试", true, v -> {
-                String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
-                runTask("正在刷新下载地址…", () -> new BiliClient(cookie).refresh(entry.episode, entry.quality.id), quality -> {
-                    media.enqueue(entry.episode, quality); media.resumeAll();
-                    if (downloadsPage) renderDownloads();
-                    notice("已重新加入下载队列");
-                });
+            addDownloadActions(entries);
+            for (DownloadCatalogue.Group group : groups) {
+                LinearLayout card = card();
+                TextView name = text(group.title, 18, TEXT); name.setTypeface(null, Typeface.BOLD); card.addView(name);
+                TextView detail = text(group.episodeCount + " 集 · " + group.items.size() + " 份视频 · 已完成 "
+                    + group.completeCount + " 份 · " + android.text.format.Formatter.formatShortFileSize(this, group.bytes), 12, MUTED);
+                detail.setPadding(0, dp(7), 0, dp(12)); card.addView(detail);
+                LinearLayout actions = row();
+                addEqual(actions, button("查看已下载剧集", true, v -> openDownloadGroup(group)));
+                addEqual(actions, button("删除整部", false, v -> confirmRemoveDownloads(group.items)));
+                card.addView(actions);
+                card.setOnClickListener(v -> openDownloadGroup(group));
+                content.addView(card, gapLayout());
+            }
+        } else {
+            content.addView(button("‹  全部离线番剧", false, v -> {
+                downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0);
             }));
-            else addEqual(actions, button(entry.paused ? "继续全部" : "暂停全部", false, v -> {
-                try { if (entry.paused) media.resumeAll(); else media.pauseAll(); renderDownloads(); } catch (Exception e) { error("操作失败", explain(e)); }
-            }));
-            if (entry.failed) addEqual(actions, button("失败详情", false, v -> new AlertDialog.Builder(this)
-                .setTitle("下载失败详情").setMessage(diagnostic)
-                .setPositiveButton("知道了", null)
-                .setNeutralButton("复制诊断", (d, w) -> copyDiagnostic(diagnostic)).show()));
-            addEqual(actions, button("删除", false, v -> new AlertDialog.Builder(this).setTitle("删除这份离线视频？")
-                .setMessage("观看记录会保留。")
-                .setNegativeButton("取消", null).setPositiveButton("删除", (d, w) -> {
-                    try { media.remove(entry); renderDownloads(); } catch (Exception e) { error("删除失败", explain(e)); }
-                }).show()));
-            card.addView(actions); content.addView(card, gapLayout());
+            title(selected == null ? downloadGroupTitle : selected.title, "按集数从小到大排列 · 同集可保留多个清晰度");
+            if (selected == null) {
+                empty("这部番剧暂时没有下载", "已删除的离线文件不会删除观看记录。", "查看全部下载",
+                    () -> { downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0); });
+                return;
+            }
+            addDownloadActions(selected.items);
+            for (MediaRepository.OfflineItem entry : selected.items) renderDownloadItem(entry);
         }
+        scroll.scrollTo(0, previousScroll);
+    }
+
+    private void addDownloadActions(List<MediaRepository.OfflineItem> visible) {
+        LinearLayout actions = row();
+        addEqual(actions, button("暂停全部", false, v -> {
+            try { media.pauseAll(); renderDownloads(); } catch (Exception e) { error("操作失败", explain(e)); }
+        }));
+        addEqual(actions, button("继续全部", false, v -> {
+            try { media.resumeAll(); renderDownloads(); } catch (Exception e) { error("操作失败", explain(e)); }
+        }));
+        List<MediaRepository.OfflineItem> snapshot = new ArrayList<>(visible);
+        addEqual(actions, button("批量删除", false, v -> chooseDownloadsToRemove(snapshot)));
+        content.addView(actions, gapLayout());
+    }
+
+    private void renderDownloadItem(MediaRepository.OfflineItem entry) {
+        LinearLayout card = card();
+        TextView name = text("第 " + entry.episode.index + " 集 · " + entry.episode.title, 16, TEXT);
+        name.setTypeface(null, Typeface.BOLD); card.addView(name);
+        card.addView(text(entry.quality.label + "  ·  " + entry.status, 12, AQUA));
+        String size = android.text.format.Formatter.formatShortFileSize(this, entry.bytesDownloaded);
+        if (entry.percent >= 0 && !entry.complete) size += String.format(Locale.CHINA, " · %.0f%%", entry.percent);
+        card.addView(text(size, 12, MUTED));
+        final String diagnostic = entry.errorDetail == null || entry.errorDetail.trim().isEmpty()
+            ? "此任务尚未记录具体错误。请重新解析重试，失败后可查看新的诊断。" : entry.errorDetail;
+        if (entry.failed) {
+            TextView detail = text(diagnostic, 12, MUTED); detail.setMaxLines(3);
+            detail.setEllipsize(android.text.TextUtils.TruncateAt.END); detail.setPadding(0, dp(5), 0, dp(5)); card.addView(detail);
+        }
+        LinearLayout actions = row();
+        if (entry.complete) addEqual(actions, button("离线播放", true, v -> play(entry.episode, entry.quality, true)));
+        else if (entry.failed) addEqual(actions, button("重新解析重试", true, v -> retryDownload(entry)));
+        else addEqual(actions, button(entry.paused ? "继续全部" : "暂停全部", false, v -> {
+            try { if (entry.paused) media.resumeAll(); else media.pauseAll(); renderDownloads(); }
+            catch (Exception e) { error("操作失败", explain(e)); }
+        }));
+        if (entry.failed) addEqual(actions, button("失败详情", false, v -> new AlertDialog.Builder(this)
+            .setTitle("下载失败详情").setMessage(diagnostic).setPositiveButton("知道了", null)
+            .setNeutralButton("复制诊断", (d, w) -> copyDiagnostic(diagnostic)).show()));
+        addEqual(actions, button("删除", false, v -> confirmRemoveDownloads(java.util.Collections.singletonList(entry))));
+        card.addView(actions); content.addView(card, gapLayout());
+    }
+
+    private boolean downloadExists(String key) {
+        for (MediaRepository.OfflineItem item : media.downloads()) if (key.equals(item.key)) return true;
+        return false;
+    }
+
+    private void retryDownload(MediaRepository.OfflineItem entry) {
+        final int generation = downloadMutationGeneration;
+        String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
+        runTask("正在刷新下载地址…", () -> new BiliClient(cookie).refresh(entry.episode, entry.quality.id), quality -> {
+            // A deleted task must not be resurrected by a late request.
+            if (generation != downloadMutationGeneration || !downloadExists(entry.key)) return;
+            media.enqueue(entry.episode, quality); media.resumeAll();
+            if (downloadsPage) renderDownloads();
+            notice("已重新加入下载队列");
+        });
+    }
+
+    private void chooseDownloadsToRemove(List<MediaRepository.OfflineItem> source) {
+        List<MediaRepository.OfflineItem> items = new ArrayList<>();
+        for (DownloadCatalogue.Group group : DownloadCatalogue.groups(source)) items.addAll(group.items);
+        if (items.isEmpty()) return;
+        boolean[] selected = new boolean[items.size()];
+        String[] labels = new String[items.size()];
+        for (int i = 0; i < labels.length; i++) {
+            MediaRepository.OfflineItem item = items.get(i);
+            labels[i] = (downloadGroupId == null ? item.episode.seriesTitle + " · " : "")
+                + "第 " + item.episode.index + " 集 · " + item.quality.label;
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("选择要删除的离线版本")
+            .setMultiChoiceItems(labels, selected, (d, index, checked) -> {
+                selected[index] = checked; updateMultiChoiceButtons((AlertDialog) d, selected, "删除");
+            }).setNeutralButton("全选", null).setNegativeButton("取消", null).setPositiveButton("删除", null).create();
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> toggleAll(dialog, selected, "删除"));
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                List<MediaRepository.OfflineItem> chosen = new ArrayList<>();
+                for (int i = 0; i < selected.length; i++) if (selected[i]) chosen.add(items.get(i));
+                if (chosen.isEmpty()) return;
+                dialog.dismiss(); confirmRemoveDownloads(chosen);
+            });
+            updateMultiChoiceButtons(dialog, selected, "删除");
+        });
+        dialog.show();
+    }
+
+    private void confirmRemoveDownloads(List<MediaRepository.OfflineItem> selected) {
+        LinkedHashMap<String, MediaRepository.OfflineItem> unique = new LinkedHashMap<>();
+        for (MediaRepository.OfflineItem item : selected) if (item != null && item.key != null) unique.put(item.key, item);
+        if (unique.isEmpty()) return;
+        List<MediaRepository.OfflineItem> snapshot = new ArrayList<>(unique.values());
+        long bytes = 0;
+        StringBuilder names = new StringBuilder();
+        for (int i = 0; i < snapshot.size(); i++) {
+            MediaRepository.OfflineItem item = snapshot.get(i); bytes += Math.max(0, item.bytesDownloaded);
+            if (i < 6) names.append("\n").append(item.episode.seriesTitle).append(" · 第 ").append(item.episode.index)
+                .append(" 集 · ").append(item.quality.label);
+        }
+        if (snapshot.size() > 6) names.append("\n…另 ").append(snapshot.size() - 6).append(" 份");
+        new AlertDialog.Builder(this).setTitle("删除 " + snapshot.size() + " 份离线视频？")
+            .setMessage("约 " + android.text.format.Formatter.formatShortFileSize(this, bytes)
+                + "。同时取消对应下载任务，保留番剧库和观看记录。" + names)
+            .setNegativeButton("取消", null).setPositiveButton("确认删除", (d, w) -> removeDownloads(snapshot)).show();
+    }
+
+    private void removeDownloads(List<MediaRepository.OfflineItem> snapshot) {
+        ++downloadMutationGeneration;
+        cancelBatchDownloads();
+        Set<String> keys = new LinkedHashSet<>();
+        for (MediaRepository.OfflineItem item : snapshot) keys.add(item.key);
+        if (currentOffline && currentEpisode != null && currentQuality != null
+                && keys.contains(MediaRepository.key(currentEpisode, currentQuality))) closePlayback();
+        int removed = 0, failed = 0;
+        for (MediaRepository.OfflineItem item : media.downloads()) {
+            if (!keys.contains(item.key)) continue;
+            try { media.remove(item); removed++; } catch (Exception exception) { failed++; }
+        }
+        if (downloadsPage) renderDownloads();
+        notice("已移除 " + removed + " 份" + (failed > 0 ? "，" + failed + " 份删除失败，请重试" : "，观看记录已保留"));
+    }
+
+    private void chooseBatchEpisodes(Models.Series series) {
+        List<Models.Episode> episodes = new ArrayList<>();
+        for (Models.Episode episode : DownloadCatalogue.episodes(series.episodes))
+            if (episode.localUri == null || episode.localUri.isEmpty()) episodes.add(episode);
+        if (episodes.isEmpty()) { notice("本地视频无需下载"); return; }
+        boolean[] selected = new boolean[episodes.size()];
+        String[] names = new String[episodes.size()];
+        for (int i = 0; i < names.length; i++) names[i] = "第 " + episodes.get(i).index + " 集 · " + episodes.get(i).title;
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("批量下载 · 选择集数")
+            .setMultiChoiceItems(names, selected, (d, index, checked) -> {
+                selected[index] = checked; updateMultiChoiceButtons((AlertDialog) d, selected, "选择清晰度");
+            }).setNeutralButton("全选", null).setNegativeButton("取消", null).setPositiveButton("选择清晰度", null).create();
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> toggleAll(dialog, selected, "选择清晰度"));
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                List<Models.Episode> chosen = new ArrayList<>();
+                for (int i = 0; i < selected.length; i++) if (selected[i]) chosen.add(episodes.get(i));
+                if (chosen.isEmpty()) return;
+                dialog.dismiss(); chooseBatchQuality(series, chosen);
+            });
+            updateMultiChoiceButtons(dialog, selected, "选择清晰度");
+        });
+        dialog.show();
+    }
+
+    private void updateMultiChoiceButtons(AlertDialog dialog, boolean[] selected, String action) {
+        int count = 0; for (boolean value : selected) if (value) count++;
+        Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+        if (positive != null) { positive.setText(action + "（" + count + "）"); positive.setEnabled(count > 0); }
+        Button all = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
+        if (all != null) all.setText(count == selected.length ? "清空选择" : "全选");
+    }
+
+    private void toggleAll(AlertDialog dialog, boolean[] selected, String action) {
+        boolean all = true; for (boolean value : selected) if (!value) all = false;
+        for (int i = 0; i < selected.length; i++) { selected[i] = !all; dialog.getListView().setItemChecked(i, !all); }
+        updateMultiChoiceButtons(dialog, selected, action);
+    }
+
+    private void chooseBatchQuality(Models.Series series, List<Models.Episode> chosen) {
+        final int token = ++selectionToken;
+        String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
+        Models.Episode first = chosen.get(0);
+        runTask("正在读取第 " + first.index + " 集的清晰度…", token,
+            () -> new BiliClient(cookie).qualities(first), available -> {
+                List<Models.Quality> qualities = new ArrayList<>();
+                for (Models.Quality quality : available) if (DownloadCatalogue.sameProfile(quality, quality)) qualities.add(quality);
+                if (qualities.isEmpty()) { error("无法批量匹配", "接口未提供明确的清晰度与编码，请尝试单集下载。"); return; }
+                String[] names = new String[qualities.size()];
+                for (int i = 0; i < names.length; i++) names[i] = qualities.get(i).label;
+                new AlertDialog.Builder(this).setTitle("统一清晰度 · 参考第 " + first.index + " 集")
+                    .setItems(names, (dialog, index) -> {
+                        if (token != selectionToken) return;
+                        Models.Quality profile = qualities.get(index);
+                        new AlertDialog.Builder(this).setTitle("批量下载 " + chosen.size() + " 集")
+                            .setMessage(profile.label + "\n\n逐集核对相同清晰度和编码，缺少的会跳过并报告。\n已有同档位跳过，失败任务重新解析重试。\n加入队列时请保持应用在前台；已加入的任务会继续后台下载。")
+                            .setNegativeButton("取消", null).setPositiveButton("开始加入队列", (d, w) -> {
+                                if (token == selectionToken) startBatchDownloads(series, chosen, profile);
+                            }).show();
+                    }).setNegativeButton("取消", null).show();
+            });
+    }
+
+    private void startBatchDownloads(Models.Series series, List<Models.Episode> episodes, Models.Quality profile) {
+        cancelBatchDownloads();
+        // Foreground downloads can start without notification permission. A permission
+        // activity here could pause this activity and cancel a newly created batch.
+        final String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
+        BatchDownloadSession.Gateway gateway = new BatchDownloadSession.Gateway() {
+            @Override public MediaRepository.OfflineItem existing(Models.Episode episode, Models.Quality quality) {
+                return DownloadCatalogue.existing(media.downloads(), episode, quality);
+            }
+            @Override public void resolve(Models.Episode episode, BatchDownloadSession.Result callback) {
+                io.execute(() -> {
+                    try {
+                        List<Models.Quality> available = new BiliClient(cookie).qualities(episode);
+                        handler.post(() -> { if (!dead) callback.success(available); });
+                    } catch (Exception exception) {
+                        handler.post(() -> { if (!dead) callback.failure(exception); });
+                    }
+                });
+            }
+            @Override public void enqueue(Models.Episode episode, Models.Quality quality) { media.enqueue(episode, quality); }
+        };
+        batchSession = new BatchDownloadSession(episodes, profile, gateway, task -> handler.postDelayed(task, 350),
+            new BatchDownloadSession.Listener() {
+                @Override public void changed(BatchDownloadSession job) {
+                    if (batchSession != job || batchDialog == null) return;
+                    Models.Episode episode = job.current();
+                    batchDialog.setMessage("正在逐集加入下载队列 " + job.processed() + " / " + job.total()
+                        + (episode == null ? "" : "\n当前：第 " + episode.index + " 集") + "\n" + profile.label
+                        + "\n\n已加入 " + job.added() + " · 已有 " + job.skipped() + " · 缺档 " + job.unavailable() + " · 失败 " + job.failed()
+                        + "\n\n停止加入或切到后台后，已经加入的任务仍会继续下载。");
+                }
+                @Override public void finished(BatchDownloadSession job) {
+                    if (batchSession != job) return;
+                    batchSession = null;
+                    if (batchDialog != null) { batchDialog.dismiss(); batchDialog = null; }
+                    if (dead || isFinishing()) return;
+                    openDownloads(); downloadGroupId = series.id; downloadGroupTitle = series.title; renderDownloads();
+                    StringBuilder summary = new StringBuilder(job.summary()).append("\n\n已加入的任务可在离线下载页查看。");
+                    List<String> details = job.details();
+                    for (int i = 0; i < Math.min(details.size(), 20); i++) summary.append("\n").append(details.get(i));
+                    if (details.size() > 20) summary.append("\n…其余 ").append(details.size() - 20).append(" 项");
+                    error("批量处理结果", summary.toString());
+                }
+            });
+        batchDialog = new AlertDialog.Builder(this).setTitle("批量下载")
+            .setMessage("正在准备加入队列…")
+            .setNegativeButton("停止加入", (d, w) -> {
+                int added = batchSession == null ? 0 : batchSession.added();
+                cancelBatchDownloads(); notice("已停止加入，已加入的 " + added + " 项会继续下载");
+            }).create();
+        batchDialog.setCanceledOnTouchOutside(false);
+        batchDialog.setOnCancelListener(d -> cancelBatchDownloads());
+        batchDialog.show();
+        batchSession.start();
+    }
+
+    private void cancelBatchDownloads() {
+        BatchDownloadSession active = batchSession; batchSession = null;
+        if (batchDialog != null) { batchDialog.dismiss(); batchDialog = null; }
+        if (active != null) active.cancel();
     }
 
     private Models.Series findSeries(String id) {
@@ -800,10 +1083,12 @@ public final class MainActivity extends Activity {
         if (hasFocus) applySystemBars();
     }
     @Override protected void onPause() {
+        cancelBatchDownloads();
         if (playerOverlay != null) playerOverlay.setActive(false);
         savePosition(); if (player != null) player.pause(); super.onPause();
     }
     @Override protected void onDestroy() {
+        cancelBatchDownloads();
         savePosition(); playerOverlay.dispose(); dead = true; ++selectionToken; handler.removeCallbacksAndMessages(null); io.shutdownNow();
         if (player != null) { playerView.setPlayer(null); player.release(); player = null; }
         super.onDestroy();

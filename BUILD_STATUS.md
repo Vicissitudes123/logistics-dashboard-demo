@@ -1,3 +1,7 @@
+# 0.1.4 构建中
+
+0.1.4 / versionCode 5 的功能已接入，正在进行 Android CI 验证。下方保留上一次已核验交付；不表示新版已经通过真机或 CI 验证。
+
 # 当前交付状态
 
 番匣 **0.1.3 / versionCode 4**，包名 `com.animeshelf.app`，Android 8.0（API 26）及以上。源码提交 `2bad54e5bafe155e6c54c11e6f77fdb06edd45f2` 已在[构建 39710892022](https://github.com/Vicissitudes123/logistics-dashboard-demo/actions/runs/39710892022)通过全部检查并完成交付。

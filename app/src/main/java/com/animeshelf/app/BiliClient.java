@@ -138,10 +138,24 @@ public final class BiliClient {
     /** Renew expiring signed URLs without silently changing the selected format. */
     public Quality refresh(Episode episode, String qualityId) throws Exception {
         if (qualityId == null || qualityId.isEmpty()) throw new ClientException("缺少已选择的清晰度");
-        for (Quality quality : qualities(episode)) {
+        return requireQuality(qualities(episode), qualityId);
+    }
+
+    private static Quality requireQuality(List<Quality> available, String qualityId) throws IOException {
+        for (Quality quality : available) {
             if (qualityId.equals(quality.id)) return quality;
         }
-        throw new ClientException("原清晰度或编码已不可用，请重新选择清晰度后下载");
+        // Do not copy API-provided labels or the requested ID into a copyable diagnostic.
+        Set<String> formats = new LinkedHashSet<>();
+        for (Quality quality : available) {
+            int codec = inferCodec(quality.codecs);
+            if (codec == 0 && quality.id.matches("[0-9]+:(7|12|13):[0-9]+"))
+                codec = Integer.parseInt(quality.id.split(":")[1]);
+            formats.add(resolutionLabel(quality.qn, quality.height) + " · " + codecLabel(codec, ""));
+            if (formats.size() == 12) break;
+        }
+        String choices = formats.isEmpty() ? "无可用档位" : String.join("、", formats);
+        throw new ClientException("原清晰度或编码已不可用，本次实际可用：" + choices + "。请重新选择清晰度");
     }
 
     private Series loadSeason(String query) throws Exception {
@@ -246,6 +260,7 @@ public final class BiliClient {
         JSONObject dash = info.optJSONObject("dash");
         boolean sawDrm = false;
         boolean missingAudio = false;
+        boolean missingQuality = false;
         if (dash != null) {
             JSONArray audioItems = dash.optJSONArray("audio");
             JSONObject audio = null;
@@ -271,11 +286,18 @@ public final class BiliClient {
                     ArrayList<String> videoUrls = mediaUrls(video);
                     if (videoUrls.isEmpty()) continue;
                     if (audio == null) { missingAudio = true; continue; }
-                    int qn = video.optInt("id", info.optInt("quality", 0));
+                    // The top-level quality describes a response/default selection, not every
+                    // DASH representation. Never label an unidentified stream with that value.
+                    int qn = video.optInt("id", 0);
+                    if (qn <= 0) { missingQuality = true; continue; }
                     int codec = video.optInt("codecid", inferCodec(video.optString("codecs")));
                     int audioId = audio.optInt("id", 0);
                     Quality quality = new Quality();
                     quality.qn = qn;
+                    quality.width = Math.max(0, video.optInt("width", 0));
+                    quality.height = Math.max(0, video.optInt("height", 0));
+                    quality.bandwidth = Math.max(0, video.optLong("bandwidth", 0));
+                    quality.codecs = video.optString("codecs", "");
                     quality.id = qn + ":" + codec + ":" + audioId;
                     Quality existing = seen.get(quality.id);
                     if (existing != null) {
@@ -324,6 +346,7 @@ public final class BiliClient {
         if (result.isEmpty()) {
             if (sawDrm) throw new ClientException("当前返回的媒体含 DRM 加密，首版不支持此内容的离线下载");
             if (missingAudio) throw new ClientException("接口仅返回画面，未取得可用音轨；请检查登录状态后重试");
+            if (missingQuality) throw new ClientException("接口返回的视频缺少实际清晰度标识，请重新解析");
             if (durl != null && durl.length() > 1) throw new ClientException("该视频采用多段旧格式，首版暂不支持完整下载");
             throw new ClientException("接口未返回可用媒体流。可能涉及账号权限、地区限制、接口变化或加密；不能仅凭此错误确定原因");
         }
@@ -539,7 +562,7 @@ public final class BiliClient {
             case 125: return "HDR";
             case 126: return "杜比视界";
             case 127: return "8K";
-            default: return height > 0 ? height + "P" : "清晰度 " + qn;
+            default: return height > 0 ? height + "P" : qn > 0 ? "清晰度 " + qn : "清晰度未知";
         }
     }
 

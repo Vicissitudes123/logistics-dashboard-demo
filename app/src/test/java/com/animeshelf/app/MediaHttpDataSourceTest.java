@@ -222,6 +222,59 @@ public class MediaHttpDataSourceTest {
         source.close();
     }
 
+    @Test public void earlyEofInKnownResponseKeepsTrackAndHostWithoutSilentlyCompletingOrReplaying() throws Exception {
+        FakeDataSource first = new FakeDataSource(0);
+        first.defaultLength = 32;
+        FakeFactory factory = new FakeFactory(first);
+        MediaHttpDataSource source = new MediaHttpDataSource(spec -> new MediaHttpDataSource.Request(
+            Arrays.asList(PRIMARY, BACKUP), null, "视频"), factory);
+        source.open(new DataSpec.Builder().setUri(PRIMARY).build());
+        assertEquals(16, source.read(new byte[16], 0, 16));
+        first.endOfInput = true;
+        IOException error = assertThrows(IOException.class, () -> source.read(new byte[16], 0, 16));
+        String diagnostic = MediaErrors.describe(error);
+        assertTrue(diagnostic, diagnostic.contains("视频"));
+        assertTrue(diagnostic, diagnostic.contains("primary.example"));
+        assertTrue(diagnostic, diagnostic.contains("EOFException"));
+        assertSafe(diagnostic);
+        assertEquals(1, factory.created);
+        source.close();
+    }
+
+    @Test public void completeKnownResponseAndUnknownLengthCanEndNormally() throws Exception {
+        for (long length : new long[]{16, C.LENGTH_UNSET}) {
+            FakeDataSource first = new FakeDataSource(0);
+            first.defaultLength = C.LENGTH_UNSET;
+            MediaHttpDataSource source = new MediaHttpDataSource(null, new FakeFactory(first));
+            source.open(new DataSpec.Builder().setUri(PRIMARY).setLength(length).build());
+            assertEquals(16, source.read(new byte[16], 0, 16));
+            first.endOfInput = true;
+            assertEquals(C.RESULT_END_OF_INPUT, source.read(new byte[16], 0, 16));
+            source.close();
+        }
+    }
+
+    @Test public void boundedRequestPastResourceEndMayEndBeforeRequestedLength() throws Exception {
+        FakeDataSource first = new FakeDataSource(0);
+        MediaHttpDataSource source = new MediaHttpDataSource(null, new FakeFactory(first));
+        assertEquals(32, source.open(new DataSpec.Builder().setUri(PRIMARY).setPosition(100).setLength(32).build()));
+        assertEquals(16, source.read(new byte[16], 0, 16));
+        first.endOfInput = true;
+        assertEquals(C.RESULT_END_OF_INPUT, source.read(new byte[16], 0, 16));
+        source.close();
+    }
+
+    @Test public void boundedRequestAtResourceEndMayImmediatelyReturnEndOfInput() throws Exception {
+        FakeDataSource first = new FakeDataSource(0);
+        first.endOfInput = true;
+        MediaHttpDataSource source = new MediaHttpDataSource(null, new FakeFactory(first));
+        // DefaultHttpDataSource allows position == documentSize (including HTTP 416),
+        // while returning the caller's bounded requested length from open().
+        assertEquals(32, source.open(new DataSpec.Builder().setUri(PRIMARY).setPosition(116).setLength(32).build()));
+        assertEquals(C.RESULT_END_OF_INPUT, source.read(new byte[16], 0, 16));
+        source.close();
+    }
+
     private static void assertSafe(String text) {
         assertNotNull(text);
         assertFalse(text, text.contains("signed_secret_123"));
@@ -244,6 +297,8 @@ public class MediaHttpDataSourceTest {
         final List<TransferListener> listeners = new ArrayList<>();
         DataSpec spec;
         IOException readFailure, closeFailure;
+        boolean endOfInput;
+        long defaultLength = 128;
         int closeCount, readCount;
         FakeDataSource(int status) { this.status = status; }
         @Override public void addTransferListener(TransferListener listener) { listeners.add(listener); }
@@ -252,11 +307,12 @@ public class MediaHttpDataSourceTest {
             if (status != 0) throw new HttpDataSource.InvalidResponseCodeException(status,
                 "signed_secret_123", null, Collections.emptyMap(), spec,
                 "SESSDATA=account_secret".getBytes(StandardCharsets.UTF_8));
-            return spec.length == C.LENGTH_UNSET ? 128 : spec.length;
+            return spec.length == C.LENGTH_UNSET ? defaultLength : spec.length;
         }
         @Override public int read(byte[] buffer, int offset, int length) throws IOException {
             readCount++;
             if (readFailure != null) throw readFailure;
+            if (endOfInput) return C.RESULT_END_OF_INPUT;
             Arrays.fill(buffer, offset, offset + length, (byte) 7);
             return length;
         }

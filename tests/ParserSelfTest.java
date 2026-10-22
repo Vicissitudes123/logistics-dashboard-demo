@@ -18,6 +18,7 @@ public final class ParserSelfTest {
 
     public static void main(String[] args) throws Exception {
         actualFormatsAndPairedAudio();
+        actualQualityIdentityAndRefresh();
         protectedAndMissingStreams();
         previewAndBusinessFlags();
         progressiveAndSegmentedFiles();
@@ -76,6 +77,55 @@ public final class ParserSelfTest {
                   "video":[{"id":80,"codecid":7,"baseUrl":"https://cdn.example/video"}]}}
                 """));
         check(safeAudio.get(0).id.endsWith(":30216"), "Encrypted audio excluded even when higher quality");
+    }
+
+    private static void actualQualityIdentityAndRefresh() throws Exception {
+        List<Quality> actual = parse(json("""
+                {"quality":127,"accept_quality":[127,112,80,64],
+                 "accept_description":["8K","1080P 高码率","1080P","720P"],
+                 "dash":{"audio":[{"id":30280,"baseUrl":"https://cdn.example/audio"}],
+                   "video":[{"id":64,"codecid":7,"codecs":"avc1.64001f",
+                     "width":1280,"height":720,"bandwidth":1700000,"baseUrl":"https://cdn.example/actual-720"},
+                     {"codecid":12,"height":1080,"baseUrl":"https://cdn.example/unidentified"}]}}
+                """));
+        check(actual.size() == 1 && actual.get(0).qn == 64, "Only actual identified representations are offered; top-level requested/default qn does not replace a missing DASH id");
+        check(actual.get(0).label.contains("720P") && !actual.get(0).label.contains("8K"), "Available 720P stream is never labelled as the top-level 8K selection");
+        Quality q = actual.get(0);
+        check(q.width == 1280 && q.height == 720 && q.bandwidth == 1700000 && q.codecs.equals("avc1.64001f"), "API stream metadata is retained without pretending it was measured");
+        Quality restored = Quality.fromJson(new JSONObject(q.toJson().toString()));
+        check(restored.width == q.width && restored.height == q.height && restored.bandwidth == q.bandwidth && restored.codecs.equals(q.codecs), "Optional stream metadata round-trips");
+        check(restored.id.equals(q.id), "Adding metadata does not change stable quality identity");
+        Quality old = Quality.fromJson(json("{\"id\":\"80:12:30280\",\"qn\":80}"));
+        check(old.width == 0 && old.height == 0 && old.bandwidth == 0 && old.codecs.isEmpty(), "Old saved quality records retain unknown metadata defaults");
+        Method require = BiliClient.class.getDeclaredMethod("requireQuality", List.class, String.class);
+        require.setAccessible(true);
+        check(invoke(require, null, actual, q.id) == q, "Refreshing an existing exact format preserves it");
+        expectFailure("本次实际可用：720P · AVC", () -> invoke(require, null, actual, "112:12:30280"));
+        q.label = "https://private.example/?token=must-not-leak";
+        try {
+            invoke(require, null, actual, "private-requested-id");
+            throw new AssertionError("Missing selected format must not silently substitute another stream");
+        } catch (IOException failure) {
+            check(failure.getMessage().contains("本次实际可用：720P · AVC"), "Missing-format message names actual available tiers");
+            check(!failure.getMessage().contains("must-not-leak") && !failure.getMessage().contains("private-requested-id"), "Copyable missing-format diagnostic excludes upstream labels and untrusted selected IDs");
+        }
+        expectFailure("缺少实际清晰度标识", () -> parse(json("""
+                {"quality":112,"dash":{"audio":[{"id":30280,"baseUrl":"https://cdn.example/audio"}],
+                  "video":[{"codecid":12,"baseUrl":"https://cdn.example/unknown"}]}}
+                """)));
+        List<Quality> downgraded = parse(json("""
+                {"quality":64,"accept_quality":[112,80,64],"accept_description":["1080P 高码率","1080P","720P"],
+                 "durl":[{"url":"https://cdn.example/actual.mp4"}]}
+                """));
+        check(downgraded.get(0).qn == 64 && downgraded.get(0).label.startsWith("720P"), "A progressive response uses its actual returned quality rather than advertised higher tiers");
+        Quality highBitrate = parse(json("""
+                {"quality":80,"dash":{"audio":[{"id":30280,"baseUrl":"https://cdn.example/audio"}],
+                  "video":[{"id":112,"codecid":12,"codecs":"hev1.1.6.L120.90","width":1920,"height":1080,
+                    "baseUrl":"https://cdn.example/high-bitrate"}]}}
+                """ )).get(0);
+        check(highBitrate.qn == 112 && highBitrate.id.equals("112:12:30280")
+                && highBitrate.label.contains("1080P 高码率") && highBitrate.label.contains("HEVC"),
+                "A real high-bitrate HEVC representation remains available even when top-level quality differs");
     }
 
     private static void previewAndBusinessFlags() throws Exception {
