@@ -345,8 +345,12 @@ public final class PlayerOverlay extends FrameLayout {
         Button button = new Button(getContext()); button.setText(value); button.setTextColor(Color.WHITE); button.setTextSize(14);
         button.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL)); button.setIncludeFontPadding(false);
         button.setSingleLine(true);
+        // These fixed-width labels never need TextView's unbounded single-line
+        // scrolling layout; keep centering and ellipsis inside the touch target.
+        button.setHorizontallyScrolling(false); button.setEllipsize(TextUtils.TruncateAt.END);
         button.setAllCaps(false); button.setMinWidth(0); button.setMinimumWidth(0); button.setMinHeight(0); button.setMinimumHeight(0);
-        button.setPadding(0, 0, 0, 0); button.setContentDescription(description); button.setBackground(controlBackground(false));
+        button.setContentDescription(description); button.setBackground(controlBackground(false));
+        button.setPadding(dp(3), dp(7), dp(3), dp(7));
         button.setOnClickListener(v -> { action.run(); if (active) showControls(); }); return button;
     }
     private Drawable controlBackground(boolean emphasized) {
