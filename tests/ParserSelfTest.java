@@ -21,6 +21,8 @@ public final class ParserSelfTest {
         protectedAndMissingStreams();
         previewAndBusinessFlags();
         progressiveAndSegmentedFiles();
+        cdnCandidatesAndPersistence();
+        confirmedLoginState();
         trustedHostsAndCookies();
         persistenceRoundTrip();
         serverErrorsRemainErrors();
@@ -95,6 +97,62 @@ public final class ParserSelfTest {
         expectFailure("多段旧格式", () -> parse(json("""
                 {"quality":80,"durl":[{"url":"https://cdn.example/one.flv"},{"url":"https://cdn.example/two.flv"}]}
                 """)));
+    }
+
+    private static void cdnCandidatesAndPersistence() throws Exception {
+        List<Quality> qualities = parse(json("""
+                {"dash":{"audio":[{"id":30280,"bandwidth":192000,
+                    "baseUrl":"https://user:password@invalid.example/audio",
+                    "backup_url":["https://audio-one.example/a.m4s?token=fixture","https://audio-two.example/a.m4s?token=fixture"]}],
+                  "video":[{"id":80,"codecid":7,
+                    "baseUrl":"http://legacy.example/v.m4s?token=fixture",
+                    "base_url":"https://primary.example/v.m4s?token=a%2Fb&part=1",
+                    "url":"https://other-primary.example/v.m4s?token=fixture",
+                    "backupUrl":["https://camel.example/v.m4s?token=fixture","//relative.example/v.m4s?token=fixture"],
+                    "backup_url":["https://primary.example/v.m4s?token=a%2Fb&part=1",
+                      "https://port.example:8443/v.m4s?token=fixture","file:///invalid",null,{},
+                      "https://user@invalid.example/v.m4s","https://invalid.example/v.m4s#fragment"]},
+                    {"id":80,"codecid":7,"baseUrl":"https://repeated-track.example/v.m4s?token=fixture"}]}}
+                """));
+        check(qualities.size() == 1, "Repeated representation contributes candidates rather than duplicate quality entries");
+        Quality quality = qualities.get(0);
+        check(quality.videoUrl.equals("https://primary.example/v.m4s?token=a%2Fb&part=1"), "An exact HTTPS alternative is preferred over rewriting HTTP");
+        check(quality.videoUrls.size() == 7, "All valid alias and backup candidates retained and deduplicated");
+        check(quality.videoUrls.get(1).contains("other-primary.example"), "Second base URL spelling is not discarded");
+        check(quality.videoUrls.contains("https://port.example:8443/v.m4s?token=fixture"), "Valid HTTPS non-default CDN port retained");
+        check(quality.videoUrls.get(4).contains("port.example"), "Exact HTTPS candidates precede upgraded legacy HTTP");
+        check(quality.videoUrls.get(5).equals("https://legacy.example/v.m4s?token=fixture"), "Legacy HTTP upgrade is only a later candidate");
+        check(quality.videoUrls.get(6).contains("repeated-track.example"), "Repeated stream source preserved");
+        check(quality.audioUrls.size() == 2 && quality.audioUrl.contains("audio-one.example"), "Backup-only audio is a usable track");
+        check(quality.headers.get("User-Agent").equals(BiliClient.USER_AGENT)
+                && quality.headers.get("Referer").equals(BiliClient.REFERER), "API and media use shared request identity");
+        Quality loaded = Quality.fromJson(new JSONObject(quality.toJson().toString()));
+        check(loaded.videoUrls.equals(quality.videoUrls) && loaded.audioUrls.equals(quality.audioUrls), "Every CDN candidate persists across process recreation");
+        check(loaded.videoUrl.equals(quality.videoUrl) && loaded.audioUrl.equals(quality.audioUrl), "Legacy primary URL fields remain consistent");
+        Quality legacy = Quality.fromJson(json("{\"videoUrl\":\"https://legacy.example/video\",\"audioUrl\":\"https://legacy.example/audio\"}"));
+        check(legacy.videoUrls.size() == 1 && legacy.audioUrls.size() == 1, "Old stored single-URL downloads gain candidates");
+        Quality arraysOnly = Quality.fromJson(json("{\"videoUrls\":[\"file:///invalid\",\"https://backup.example/video\",\"https://backup.example/video\"]}"));
+        check(arraysOnly.videoUrl.equals("https://backup.example/video") && arraysOnly.videoUrls.size() == 1, "Candidate-only records restore a safe primary");
+        check(Quality.httpsMediaUrl("https://example.test/line\nbreak").isEmpty(), "Control characters cannot enter a CDN URL");
+        check(Quality.httpsMediaUrl("https://example.test:99999/video").isEmpty(), "Invalid CDN ports rejected");
+        Quality progressive = parse(json("{\"quality\":80,\"durl\":[{\"url\":\"https://first.example/video.mp4\",\"backup_url\":[\"https://backup.example/video.mp4\"]}]}" )).get(0);
+        check(progressive.videoUrls.size() == 2 && progressive.audioUrls.isEmpty(), "Progressive backup URLs are retained without a fake audio track");
+    }
+
+    private static void confirmedLoginState() throws Exception {
+        check(login(json("{\"code\":-101,\"message\":\"账号未登录\"}")).isEmpty(), "Explicit nav unauthenticated code returns logged out");
+        check(login(json("{\"code\":0,\"data\":{\"isLogin\":false}}")).isEmpty(), "Explicit false login flag returns logged out");
+        check(login(json("{\"code\":0,\"data\":{\"isLogin\":true,\"uname\":\"测试用户\"}}")).equals("测试用户"), "Only nav confirmation produces account name");
+        JSONObject account = json("{\"code\":0,\"data\":{\"isLogin\":true}}");
+        check(login(account).equals("B站账号"), "Confirmed login without a nickname still succeeds");
+        account.getJSONObject("data").put("uname", "  昵称\n\t\u202e测试  ");
+        check(login(account).equals("昵称测试"), "Account name removes control and bidi formatting characters");
+        account.getJSONObject("data").put("uname", "😀".repeat(100));
+        String shortened = login(account);
+        check(shortened.codePointCount(0, shortened.length()) == 80 && !Character.isHighSurrogate(shortened.charAt(shortened.length() - 1)), "Account name is capped without splitting emoji");
+        expectFailure("未返回明确", () -> login(json("{\"code\":0,\"data\":{\"uname\":\"Unverified avatar\"}}")));
+        expectFailure("无法识别", () -> login(json("{\"code\":0,\"data\":{\"isLogin\":\"true\"}}")));
+        expectFailure("-352", () -> login(json("{\"code\":-352,\"message\":\"需要验证\"}")));
     }
 
     private static void trustedHostsAndCookies() throws Exception {
@@ -189,6 +247,12 @@ public final class ParserSelfTest {
         Method method = BiliClient.class.getDeclaredMethod("checkPlaybackRestrictions", JSONObject.class);
         method.setAccessible(true);
         invoke(method, null, data);
+    }
+
+    private static String login(JSONObject data) throws Exception {
+        Method method = BiliClient.class.getDeclaredMethod("loginName", JSONObject.class);
+        method.setAccessible(true);
+        return (String) invoke(method, CLIENT, data);
     }
 
     private static URL trusted(String address) throws Exception {

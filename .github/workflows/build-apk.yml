@@ -48,18 +48,22 @@ jobs:
           curl --fail --location --retry 3 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o build/parser-test/json.jar
           javac --release 17 -cp build/parser-test/json.jar -d build/parser-test app/src/main/java/com/animeshelf/app/Models.java app/src/main/java/com/animeshelf/app/BiliClient.java tests/ParserSelfTest.java
           java -cp build/parser-test:build/parser-test/json.jar com.animeshelf.app.ParserSelfTest
-      - name: Build and lint
-        run: gradle :app:assembleDebug :app:lintDebug --no-daemon
+      - name: Test, build and lint
+        run: gradle :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon
       - name: Verify APK signature
+        shell: bash
         run: |
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/debug/app-debug.apk | tee app/build/outputs/apk/debug/apk-signature.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/apk-info.txt
-      - name: Upload APK and lint report
+      - name: Upload APK and validation reports
         uses: actions/upload-artifact@v4
         with:
           name: anime-shelf-test-apk
           path: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/debug/apk-info.txt
+            app/build/outputs/apk/debug/apk-signature.txt
             app/build/reports/lint-results-debug.html
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/*.xml
           if-no-files-found: error

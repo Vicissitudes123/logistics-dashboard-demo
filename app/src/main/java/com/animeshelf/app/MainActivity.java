@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
@@ -74,10 +75,10 @@ public final class MainActivity extends Activity {
     private Models.Series currentSeries;
     private Models.Episode currentEpisode;
     private Models.Quality currentQuality;
-    private boolean dead, fullScreen, downloadsPage, seriesPage, sourceReady;
-    private int selectionToken;
+    private boolean dead, fullScreen, downloadsPage, seriesPage, sourceReady, currentOffline;
+    private int selectionToken, taskStatusToken;
     private float zoom = 1f;
-    private long lastRender;
+    private long lastRender, requestedResumeMs;
 
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
@@ -115,7 +116,10 @@ public final class MainActivity extends Activity {
         LinearLayout brand = row();
         TextView name = text("番匣", 29, TEXT); name.setTypeface(null, Typeface.BOLD);
         brand.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        brand.addView(button("B站登录", false, v -> startActivity(new Intent(this, LoginActivity.class))));
+        brand.addView(button("B站登录", false, v -> {
+            ++selectionToken;
+            startActivity(new Intent(this, LoginActivity.class));
+        }));
         brand.addView(button("＋ 添加", true, v -> addMenu()));
         header.addView(brand);
         header.addView(text("把喜欢的故事，带在身边", 12, MUTED));
@@ -158,7 +162,7 @@ public final class MainActivity extends Activity {
         scroll.addView(content); body.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         nav = row(); nav.setPadding(dp(12), dp(6), dp(12), dp(10)); nav.setBackgroundColor(PANEL);
         addEqual(nav, button("番剧库", false, v -> { downloadsPage = false; renderLibrary(); }));
-        addEqual(nav, button("离线下载", false, v -> { downloadsPage = true; renderDownloads(); }));
+        addEqual(nav, button("离线下载", false, v -> { ++selectionToken; downloadsPage = true; renderDownloads(); }));
         body.addView(nav);
     }
 
@@ -180,7 +184,7 @@ public final class MainActivity extends Activity {
             String value = input.getText().toString().trim();
             if (value.isEmpty()) { input.setError("请先粘贴链接"); return; }
             dialog.dismiss();
-            String cookie = CookieManager.getInstance().getCookie("https://www.bilibili.com");
+            String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
             runTask("正在读取剧集…", () -> new BiliClient(cookie).resolve(value), series -> {
                 store.saveSeries(series);
                 currentSeries = series; downloadsPage = false;
@@ -192,6 +196,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderLibrary() {
+        ++selectionToken;
         downloadsPage = false; seriesPage = false; content.removeAllViews();
         title("我的番剧", "剧集、离线文件和观看记录，都保存在这台设备");
         List<Models.Series> series = store.listSeries();
@@ -222,6 +227,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderSeries(Models.Series series) {
+        ++selectionToken;
         downloadsPage = false; seriesPage = true; currentSeries = series; content.removeAllViews();
         content.addView(button("‹  返回番剧库", false, v -> renderLibrary()));
         title(series.title, series.episodes.size() + " 集  ·  点击剧集选择播放或下载");
@@ -244,17 +250,20 @@ public final class MainActivity extends Activity {
             if (progress.positionMs > 0) detail += " · " + time(progress.positionMs) + (progress.durationMs > 0 ? " / " + time(progress.durationMs) : "");
             labels.addView(text(detail, 11, MUTED));
             line.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
-            TextView play = text(currentEpisode != null && episode.id.equals(currentEpisode.id) ? "播放中" : "›", 14, AQUA);
+            boolean selected = currentEpisode != null && episode.id.equals(currentEpisode.id);
+            TextView play = text(selected ? "已选择" : "›", 14, AQUA);
             line.addView(play); card.addView(line); card.setOnClickListener(v -> selectEpisode(episode));
             content.addView(card, gapLayout());
         }
     }
 
     private void selectEpisode(Models.Episode episode) {
+        final int token = ++selectionToken;
         if (episode.localUri != null && !episode.localUri.isEmpty()) { play(episode, null, false); return; }
         if (hasDownload(episode.id)) {
             new AlertDialog.Builder(this).setTitle(episode.title)
                 .setItems(new String[]{"播放已下载版本", "选择在线清晰度 / 下载其他版本"}, (d, choice) -> {
+                    if (token != selectionToken) return;
                     if (choice == 0) chooseOffline(episode); else loadQualities(episode);
                 }).show();
         } else loadQualities(episode);
@@ -262,21 +271,22 @@ public final class MainActivity extends Activity {
 
     private void loadQualities(Models.Episode episode) {
         int token = ++selectionToken;
-        String cookie = CookieManager.getInstance().getCookie("https://www.bilibili.com");
-        runTask("正在获取实际可用清晰度…", () -> new BiliClient(cookie).qualities(episode), qualities -> {
+        String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
+        runTask("正在获取实际可用清晰度…", token, () -> new BiliClient(cookie).qualities(episode), qualities -> {
             if (token != selectionToken) return;
             if (qualities.isEmpty()) { error("没有可播放格式", "当前账号或这集内容未返回可用视频源。请先检查 B站登录及播放权限。"); return; }
             String[] names = new String[qualities.size()];
             for (int i = 0; i < qualities.size(); i++) names[i] = qualities.get(i).label;
             new AlertDialog.Builder(this).setTitle("第 " + episode.index + " 集 · 选择清晰度")
-                .setItems(names, (dialog, selected) -> qualityAction(episode, qualities.get(selected)))
+                .setItems(names, (dialog, selected) -> { if (token == selectionToken) qualityAction(episode, qualities.get(selected), token); })
                 .setNegativeButton("取消", null).show();
         });
     }
 
-    private void qualityAction(Models.Episode episode, Models.Quality quality) {
+    private void qualityAction(Models.Episode episode, Models.Quality quality, int token) {
         new AlertDialog.Builder(this).setTitle(quality.label)
             .setItems(new String[]{"在线播放", "下载到本机"}, (dialog, action) -> {
+                if (token != selectionToken) return;
                 if (action == 0) play(episode, quality, false);
                 else {
                     if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
@@ -288,18 +298,29 @@ public final class MainActivity extends Activity {
     }
 
     private void chooseOffline(Models.Episode episode) {
+        final int token = selectionToken;
         List<Models.Quality> choices = downloadedQualities(episode.id);
         if (choices.isEmpty()) { error("离线文件未就绪", "这集尚未完整下载。请到离线下载页查看进度。"); return; }
         if (choices.size() == 1) { play(episode, choices.get(0), true); return; }
         String[] names = new String[choices.size()];
         for (int i = 0; i < choices.size(); i++) names[i] = choices.get(i).label;
-        new AlertDialog.Builder(this).setTitle("选择已下载版本").setItems(names, (d, i) -> play(episode, choices.get(i), true)).show();
+        new AlertDialog.Builder(this).setTitle("选择已下载版本").setItems(names, (d, i) -> {
+            if (token == selectionToken) play(episode, choices.get(i), true);
+        }).show();
     }
 
     private void play(Models.Episode episode, Models.Quality quality, boolean offline) {
+        play(episode, quality, offline, -1);
+    }
+
+    private void play(Models.Episode episode, Models.Quality quality, boolean offline, long resumeOverrideMs) {
         ++selectionToken; savePosition(); sourceReady = false;
         if (player != null) { playerView.setPlayer(null); player.release(); player = null; }
-        currentEpisode = episode; currentQuality = quality;
+        currentEpisode = episode; currentQuality = quality; currentOffline = offline;
+        Store.Progress progress = store.getProgress(episode.id);
+        long resume = resumeOverrideMs >= 0 ? resumeOverrideMs : progress.positionMs;
+        if (resumeOverrideMs < 0 && progress.durationMs > 0 && resume >= progress.durationMs - 2000) resume = 0;
+        requestedResumeMs = Math.max(0, resume);
         Models.Series found = findSeries(episode.seriesId);
         if (found != null) currentSeries = found;
         try {
@@ -307,17 +328,14 @@ public final class MainActivity extends Activity {
             playerView.setPlayer(next);
             if (episode.localUri != null && !episode.localUri.isEmpty()) next.setMediaItem(MediaItem.fromUri(episode.localUri));
             else next.setMediaSource(media.createMediaSource(episode, quality, offline));
-            Store.Progress progress = store.getProgress(episode.id);
-            long resume = progress.positionMs;
-            if (progress.durationMs > 0 && resume >= progress.durationMs - 2000) resume = 0;
-            next.seekTo(Math.max(0, resume));
+            next.seekTo(requestedResumeMs);
             next.setPlaybackSpeed(store.getSpeed());
             speedLabel.setText(speedText(next.getPlaybackParameters().speed));
             next.addListener(new Player.Listener() {
                 @Override public void onPlayerError(PlaybackException e) {
                     if (dead || player != next) return;
                     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                    error("播放未能继续", "请确认文件完整、网络可用及设备支持此编码。在线地址过期时，请重新选择这集和清晰度。\n\n" + e.getErrorCodeName());
+                    showPlaybackFailure(e);
                 }
                 @Override public void onIsPlayingChanged(boolean playing) {
                     if (player != next) return;
@@ -336,7 +354,53 @@ public final class MainActivity extends Activity {
             nowSubtitle.setText(episode.title + "  ·  " + (quality == null ? "本地文件" : quality.label + (offline ? " · 离线" : " · 在线")));
             resizeVideo();
             if (!downloadsPage && currentSeries != null) renderSeries(currentSeries);
-        } catch (Exception e) { error("无法播放", explain(e)); }
+        } catch (Exception e) { showPlaybackFailure(e); }
+    }
+
+    private void showPlaybackFailure(Throwable cause) {
+        if (dead || isFinishing()) return;
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        String diagnostic = MediaErrors.describe(cause);
+        Models.Episode failedEpisode = currentEpisode;
+        Models.Quality failedQuality = currentQuality;
+        ExoPlayer failedPlayer = player;
+        long resume = requestedResumeMs;
+        // ExoPlayer is already IDLE when a source error is delivered. Save the last
+        // real position explicitly; the normal ticker intentionally ignores IDLE.
+        if (sourceReady && failedPlayer != null && failedEpisode != null) {
+            resume = Math.max(0, failedPlayer.getCurrentPosition());
+            long duration = failedPlayer.getDuration();
+            if (duration <= 0) duration = store.getProgress(failedEpisode.id).durationMs;
+            store.saveProgress(failedEpisode, resume, Math.max(0, duration));
+        }
+        final long retryPosition = resume;
+        boolean canRefresh = failedEpisode != null && failedQuality != null && !currentOffline &&
+            (failedEpisode.localUri == null || failedEpisode.localUri.isEmpty());
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle("播放未能继续")
+            .setMessage(diagnostic + (canRefresh ? "\n\n可以刷新当前清晰度的播放地址，重试时会保留观看位置。" : ""))
+            .setNegativeButton("关闭", null)
+            .setNeutralButton("复制诊断", (d, w) -> copyDiagnostic(diagnostic));
+        if (canRefresh) dialog.setPositiveButton("刷新地址重试", (d, w) ->
+            refreshPlayback(failedEpisode, failedQuality, failedPlayer, retryPosition));
+        dialog.show();
+    }
+
+    private void refreshPlayback(Models.Episode episode, Models.Quality quality, ExoPlayer failedPlayer, long positionMs) {
+        if (dead || currentEpisode != episode || player != failedPlayer) return;
+        int token = ++selectionToken;
+        String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
+        runTask("正在刷新当前播放地址…", token, () -> new BiliClient(cookie).refresh(episode, quality.id), refreshed -> {
+            if (token != selectionToken || currentEpisode != episode || player != failedPlayer) return;
+            play(episode, refreshed, false, positionMs);
+        });
+    }
+
+    private void copyDiagnostic(String diagnostic) {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+        if (clipboard == null) { notice("暂时无法使用剪贴板"); return; }
+        // The input is already sanitized by MediaErrors; never copy raw exceptions.
+        clipboard.setPrimaryClip(ClipData.newPlainText("番匣诊断", diagnostic));
+        notice("已复制诊断，不含播放地址参数或登录凭据");
     }
 
     private void savePosition() {
@@ -456,11 +520,20 @@ public final class MainActivity extends Activity {
             TextView name = text(entry.episode.seriesTitle + " · 第 " + entry.episode.index + " 集", 16, TEXT);
             name.setTypeface(null, Typeface.BOLD); card.addView(name);
             card.addView(text(entry.quality.label + "  ·  " + entry.status, 12, AQUA));
+            final String diagnostic = entry.errorDetail == null || entry.errorDetail.trim().isEmpty()
+                ? "此任务尚未记录具体错误。请重新解析重试，失败后可查看新的诊断。" : entry.errorDetail;
+            if (entry.failed) {
+                TextView detail = text(diagnostic, 12, MUTED);
+                detail.setMaxLines(3);
+                detail.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                detail.setPadding(0, dp(5), 0, dp(5));
+                card.addView(detail);
+            }
             if (entry.percent >= 0 && !entry.complete) card.addView(text(String.format(Locale.CHINA, "%.0f%%", entry.percent), 12, MUTED));
             LinearLayout actions = row();
             if (entry.complete) addEqual(actions, button("离线播放", true, v -> play(entry.episode, entry.quality, true)));
             else if (entry.failed) addEqual(actions, button("重新解析重试", true, v -> {
-                String cookie = CookieManager.getInstance().getCookie("https://www.bilibili.com");
+                String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
                 runTask("正在刷新下载地址…", () -> new BiliClient(cookie).refresh(entry.episode, entry.quality.id), quality -> {
                     media.enqueue(entry.episode, quality); media.resumeAll(); renderDownloads(); notice("已重新加入下载队列");
                 });
@@ -468,6 +541,10 @@ public final class MainActivity extends Activity {
             else addEqual(actions, button(entry.paused ? "继续全部" : "暂停全部", false, v -> {
                 try { if (entry.paused) media.resumeAll(); else media.pauseAll(); renderDownloads(); } catch (Exception e) { error("操作失败", explain(e)); }
             }));
+            if (entry.failed) addEqual(actions, button("失败详情", false, v -> new AlertDialog.Builder(this)
+                .setTitle("下载失败详情").setMessage(diagnostic)
+                .setPositiveButton("知道了", null)
+                .setNeutralButton("复制诊断", (d, w) -> copyDiagnostic(diagnostic)).show()));
             addEqual(actions, button("删除", false, v -> new AlertDialog.Builder(this).setTitle("删除这份离线视频？")
                 .setMessage("观看记录会保留。")
                 .setNegativeButton("取消", null).setPositiveButton("删除", (d, w) -> {
@@ -503,13 +580,27 @@ public final class MainActivity extends Activity {
 
     private interface Receiver<T> { void accept(T value) throws Exception; }
     private <T> void runTask(String message, Callable<T> task, Receiver<T> receiver) {
+        runTask(message, -1, task, receiver);
+    }
+    private <T> void runTask(String message, int expectedSelection, Callable<T> task, Receiver<T> receiver) {
+        final int statusToken = ++taskStatusToken;
         status.setText(message); status.setVisibility(View.VISIBLE);
         io.execute(() -> {
             try {
                 T value = task.call();
-                handler.post(() -> { if (dead) return; status.setVisibility(View.GONE); try { receiver.accept(value); } catch (Exception e) { error("操作失败", explain(e)); } });
+                handler.post(() -> {
+                    if (dead || isFinishing()) return;
+                    if (statusToken == taskStatusToken) status.setVisibility(View.GONE);
+                    if (expectedSelection >= 0 && expectedSelection != selectionToken) return;
+                    try { receiver.accept(value); } catch (Exception e) { error("操作失败", explain(e)); }
+                });
             } catch (Exception e) {
-                handler.post(() -> { if (dead) return; status.setVisibility(View.GONE); error("未能完成", explain(e)); });
+                handler.post(() -> {
+                    if (dead || isFinishing()) return;
+                    if (statusToken == taskStatusToken) status.setVisibility(View.GONE);
+                    if (expectedSelection >= 0 && expectedSelection != selectionToken) return;
+                    error("未能完成", explain(e));
+                });
             }
         });
     }
@@ -543,7 +634,7 @@ public final class MainActivity extends Activity {
     private int dp(float value) { return Math.round(getResources().getDisplayMetrics().density * value); }
     private void notice(String message) { if (!dead) Toast.makeText(this, message, Toast.LENGTH_SHORT).show(); }
     private void error(String title, String message) { if (!dead && !isFinishing()) new AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("知道了", null).show(); }
-    private static String explain(Exception exception) { String message = exception.getMessage(); return message == null || message.trim().isEmpty() ? exception.getClass().getSimpleName() : message; }
+    private static String explain(Exception exception) { return MediaErrors.describe(exception); }
     private static Models.Episode findEpisode(Models.Series series, String id) { if (id == null) return null; for (Models.Episode episode : series.episodes) if (id.equals(episode.id)) return episode; return null; }
     private static String speedText(float rate) { return String.format(Locale.ROOT, "%s×", rate); }
     private static String time(long milliseconds) { long total = Math.max(0, milliseconds) / 1000; return total >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", total / 3600, total / 60 % 60, total % 60) : String.format(Locale.ROOT, "%02d:%02d", total / 60, total % 60); }

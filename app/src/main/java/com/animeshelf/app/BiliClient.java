@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -28,6 +29,13 @@ import java.util.regex.Pattern;
 
 /** Bilibili's existing web responses; no proxy, DRM decryption or privilege bypass. */
 public final class BiliClient {
+    /** Safe, locally authored explanation. Transport exceptions retain their original types. */
+    public static final class ClientException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        private ClientException(String message) { super(message); }
+    }
+
     public static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
     public static final String REFERER = "https://www.bilibili.com/";
@@ -38,7 +46,7 @@ public final class BiliClient {
     private static final Pattern SEASON_ID = Pattern.compile("(?i)(?:^|/)(ss[0-9]+)(?:$|[/?#])");
     private final String cookie;
 
-    /** Pass the cookie returned by Android CookieManager for https://www.bilibili.com. */
+    /** Pass the cookie returned by Android CookieManager for https://api.bilibili.com. */
     public BiliClient(String cookie) {
         this.cookie = cookie == null ? "" : cookie;
         if (this.cookie.indexOf('\r') >= 0 || this.cookie.indexOf('\n') >= 0) {
@@ -46,10 +54,32 @@ public final class BiliClient {
         }
     }
 
+    /** Empty means explicitly logged out. Request/verification errors are not login results. */
+    public String verifyLogin() throws Exception {
+        return loginName(getJson("https://api.bilibili.com/x/web-interface/nav"));
+    }
+
+    private String loginName(JSONObject response) throws IOException {
+        if (response.optInt("code", Integer.MIN_VALUE) == -101) return "";
+        JSONObject info = checkedPayload(response, "验证 B 站登录状态失败");
+        if (!info.has("isLogin") || info.isNull("isLogin")) {
+            throw new ClientException("登录验证接口未返回明确的登录状态，请稍后重试");
+        }
+        Object loggedIn = info.opt("isLogin");
+        if (!(loggedIn instanceof Boolean)) {
+            throw new ClientException("登录验证接口返回了无法识别的登录状态，请稍后重试");
+        }
+        if (!((Boolean) loggedIn)) return "";
+        String name = info.optString("uname", "").replaceAll("[\\p{Cntrl}\\p{Cf}]", "").trim();
+        if (name.isEmpty()) return "B站账号";
+        int length = name.codePointCount(0, name.length());
+        return length > 80 ? name.substring(0, name.offsetByCodePoints(0, 80)) : name;
+    }
+
     /** Accepts a B站 share message, an HTTPS link, ep/ss ID, or BV ID. Run off the UI thread. */
     public Series resolve(String input) throws Exception {
         String value = input == null ? "" : input.trim();
-        if (value.isEmpty()) throw new IOException("请粘贴 B 站番剧、单集或 BV 视频链接");
+        if (value.isEmpty()) throw new ClientException("请粘贴 B 站番剧、单集或 BV 视频链接");
         Matcher share = SHARE_URL.matcher(value);
         if (share.find()) {
             URL url = trustedUrl(stripTrailingPunctuation(share.group()));
@@ -58,7 +88,7 @@ public final class BiliClient {
         } else if (value.matches("(?i)^(ep|ss)[0-9]+$") || value.matches("(?i)^BV[0-9a-z]{10}$")) {
             // Explicit IDs are safe to place into our fixed API paths.
         } else {
-            throw new IOException("链接格式不支持；请使用 bilibili.com、b23.tv 链接或 ep / ss / BV 编号");
+            throw new ClientException("链接格式不支持；请使用 bilibili.com、b23.tv 链接或 ep / ss / BV 编号");
         }
 
         Matcher episodeMatch = EPISODE_ID.matcher(value);
@@ -70,21 +100,21 @@ public final class BiliClient {
             String bvid = "BV" + videoMatch.group(1).substring(2);
             return loadVideo(bvid);
         }
-        throw new IOException("未找到可识别的番剧或视频编号，请从视频播放页复制分享链接");
+        throw new ClientException("未找到可识别的番剧或视频编号，请从视频播放页复制分享链接");
     }
 
     /** Returns only actual non-DRM media streams available to the current session. */
     public List<Quality> qualities(Episode episode) throws Exception {
-        if (episode == null) throw new IOException("缺少集数信息");
-        if (!episode.localUri.isEmpty()) throw new IOException("本地视频无需获取在线清晰度");
+        if (episode == null) throw new ClientException("缺少集数信息");
+        if (!episode.localUri.isEmpty()) throw new ClientException("本地视频无需获取在线清晰度");
         String base;
         if (episode.bangumi) {
-            if (!episode.id.matches("ep[0-9]+")) throw new IOException("番剧集数编号无效");
+            if (!episode.id.matches("ep[0-9]+")) throw new ClientException("番剧集数编号无效");
             base = "https://api.bilibili.com/pgc/player/web/playurl?ep_id=" + episode.id.substring(2);
             if (episode.cid > 0) base += "&cid=" + episode.cid;
         } else {
             if (episode.cid <= 0 || (episode.aid <= 0 && !episode.bvid.matches("BV[0-9A-Za-z]{10}"))) {
-                throw new IOException("视频分集信息不完整，请重新导入链接");
+                throw new ClientException("视频分集信息不完整，请重新导入链接");
             }
             base = "https://api.bilibili.com/x/player/playurl?cid=" + episode.cid;
             base += episode.aid > 0 ? "&avid=" + episode.aid : "&bvid=" + encode(episode.bvid);
@@ -102,17 +132,17 @@ public final class BiliClient {
 
     /** Renew expiring signed URLs without silently changing the selected format. */
     public Quality refresh(Episode episode, String qualityId) throws Exception {
-        if (qualityId == null || qualityId.isEmpty()) throw new IOException("缺少已选择的清晰度");
+        if (qualityId == null || qualityId.isEmpty()) throw new ClientException("缺少已选择的清晰度");
         for (Quality quality : qualities(episode)) {
             if (qualityId.equals(quality.id)) return quality;
         }
-        throw new IOException("原清晰度或编码已不可用，请重新选择清晰度后下载");
+        throw new ClientException("原清晰度或编码已不可用，请重新选择清晰度后下载");
     }
 
     private Series loadSeason(String query) throws Exception {
         JSONObject info = checkedPayload(getJson("https://api.bilibili.com/pgc/view/web/season?" + query), "获取番剧信息失败");
         long seasonId = info.optLong("season_id", 0);
-        if (seasonId <= 0) throw new IOException("番剧接口未返回有效的季编号");
+        if (seasonId <= 0) throw new ClientException("番剧接口未返回有效的季编号");
         Series series = new Series();
         series.id = "ss" + seasonId;
         series.title = nonEmpty(info.optString("title"), "未命名番剧");
@@ -130,7 +160,7 @@ public final class BiliClient {
                 }
             }
         }
-        if (series.episodes.isEmpty()) throw new IOException("该番剧暂未返回可选集数，可能未上线或当前地区不可用");
+        if (series.episodes.isEmpty()) throw new ClientException("该番剧暂未返回可选集数，可能未上线或当前地区不可用");
         return series;
     }
 
@@ -170,7 +200,7 @@ public final class BiliClient {
         series.id = nonEmpty(info.optString("bvid"), bvid);
         series.title = nonEmpty(info.optString("title"), bvid);
         JSONArray pages = info.optJSONArray("pages");
-        if (pages == null || pages.length() == 0) throw new IOException("视频接口未返回分集信息");
+        if (pages == null || pages.length() == 0) throw new ClientException("视频接口未返回分集信息");
         for (int i = 0; i < pages.length(); i++) {
             JSONObject page = pages.optJSONObject(i);
             if (page == null || page.optLong("cid", 0) <= 0) continue;
@@ -185,7 +215,7 @@ public final class BiliClient {
             episode.title = nonEmpty(page.optString("part"), "第 " + episode.index + " 集");
             series.episodes.add(episode);
         }
-        if (series.episodes.isEmpty()) throw new IOException("没有找到可播放的视频分集");
+        if (series.episodes.isEmpty()) throw new ClientException("没有找到可播放的视频分集");
         return series;
     }
 
@@ -220,7 +250,7 @@ public final class BiliClient {
                     JSONObject item = audioItems.optJSONObject(i);
                     if (item == null) continue;
                     if (isDrm(item)) { sawDrm = true; continue; }
-                    if (mediaUrl(item).isEmpty()) continue;
+                    if (mediaUrls(item).isEmpty()) continue;
                     // The ordinary DASH audio array is AAC; avoid optional Dolby/FLAC tracks.
                     long bandwidth = item.optLong("bandwidth", 0);
                     if (audio == null || bandwidth > bestBandwidth) { audio = item; bestBandwidth = bandwidth; }
@@ -228,13 +258,13 @@ public final class BiliClient {
             }
             JSONArray videoItems = dash.optJSONArray("video");
             if (videoItems != null) {
-                Set<String> seen = new HashSet<>();
+                Map<String, Quality> seen = new LinkedHashMap<>();
                 for (int i = 0; i < videoItems.length(); i++) {
                     JSONObject video = videoItems.optJSONObject(i);
                     if (video == null) continue;
                     if (isDrm(video)) { sawDrm = true; continue; }
-                    String videoUrl = mediaUrl(video);
-                    if (videoUrl.isEmpty()) continue;
+                    ArrayList<String> videoUrls = mediaUrls(video);
+                    if (videoUrls.isEmpty()) continue;
                     if (audio == null) { missingAudio = true; continue; }
                     int qn = video.optInt("id", info.optInt("quality", 0));
                     int codec = video.optInt("codecid", inferCodec(video.optString("codecs")));
@@ -242,11 +272,20 @@ public final class BiliClient {
                     Quality quality = new Quality();
                     quality.qn = qn;
                     quality.id = qn + ":" + codec + ":" + audioId;
-                    if (!seen.add(quality.id)) continue;
+                    Quality existing = seen.get(quality.id);
+                    if (existing != null) {
+                        for (String candidate : videoUrls) {
+                            if (!existing.videoUrls.contains(candidate)) existing.videoUrls.add(candidate);
+                        }
+                        continue;
+                    }
+                    seen.put(quality.id, quality);
                     String resolution = nonEmpty(labels.get(qn), resolutionLabel(qn, video.optInt("height", 0)));
                     quality.label = resolution + " · " + codecLabel(codec, video.optString("codecs"));
-                    quality.videoUrl = videoUrl;
-                    quality.audioUrl = mediaUrl(audio);
+                    quality.videoUrls = videoUrls;
+                    quality.videoUrl = videoUrls.get(0);
+                    quality.audioUrls = mediaUrls(audio);
+                    quality.audioUrl = quality.audioUrls.get(0);
                     addMediaHeaders(quality);
                     result.add(quality);
                 }
@@ -259,23 +298,24 @@ public final class BiliClient {
         if (result.isEmpty() && durl != null && durl.length() == 1) {
             JSONObject file = durl.optJSONObject(0);
             if (file != null && !isDrm(file)) {
-                String url = mediaUrl(file);
-                if (!url.isEmpty()) {
+                ArrayList<String> urls = mediaUrls(file);
+                if (!urls.isEmpty()) {
                     Quality quality = new Quality();
                     quality.qn = info.optInt("quality", 0);
                     quality.id = quality.qn + ":progressive:0";
                     quality.label = nonEmpty(labels.get(quality.qn), resolutionLabel(quality.qn, 0)) + " · 原始文件";
-                    quality.videoUrl = url;
+                    quality.videoUrls = urls;
+                    quality.videoUrl = urls.get(0);
                     addMediaHeaders(quality);
                     result.add(quality);
                 }
             } else if (file != null) sawDrm = true;
         }
         if (result.isEmpty()) {
-            if (sawDrm) throw new IOException("当前返回的媒体含 DRM 加密，首版不支持此内容的离线下载");
-            if (missingAudio) throw new IOException("接口仅返回画面，未取得可用音轨；请检查登录状态后重试");
-            if (durl != null && durl.length() > 1) throw new IOException("该视频采用多段旧格式，首版暂不支持完整下载");
-            throw new IOException("接口未返回可用媒体流。可能涉及账号权限、地区限制、接口变化或加密；不能仅凭此错误确定原因");
+            if (sawDrm) throw new ClientException("当前返回的媒体含 DRM 加密，首版不支持此内容的离线下载");
+            if (missingAudio) throw new ClientException("接口仅返回画面，未取得可用音轨；请检查登录状态后重试");
+            if (durl != null && durl.length() > 1) throw new ClientException("该视频采用多段旧格式，首版暂不支持完整下载");
+            throw new ClientException("接口未返回可用媒体流。可能涉及账号权限、地区限制、接口变化或加密；不能仅凭此错误确定原因");
         }
         result.sort(Comparator.comparingInt((Quality q) -> q.qn).reversed()
                 .thenComparingInt(q -> q.id.contains(":7:") ? 0 : 1).thenComparing(q -> q.id));
@@ -283,13 +323,13 @@ public final class BiliClient {
     }
 
     private static void checkPlaybackRestrictions(JSONObject info) throws IOException {
-        if (isDrm(info)) throw new IOException("当前媒体标记为 DRM 加密，首版不支持此内容的离线下载");
-        if (truthy(info.opt("is_preview"))) throw new IOException("当前账号仅获得试看内容，请在 B 站确认正片观看权限");
+        if (isDrm(info)) throw new ClientException("当前媒体标记为 DRM 加密，首版不支持此内容的离线下载");
+        if (truthy(info.opt("is_preview"))) throw new ClientException("当前账号仅获得试看内容，请在 B 站确认正片观看权限");
         for (String key : new String[]{"business", "play_view_business", "play_view_business_info"}) {
             JSONObject business = info.optJSONObject(key);
             if (business != null) {
-                if (isDrm(business)) throw new IOException("当前媒体标记为 DRM 加密，首版不支持此内容的离线下载");
-                if (truthy(business.opt("is_preview"))) throw new IOException("当前账号仅获得试看内容，请在 B 站确认正片观看权限");
+                if (isDrm(business)) throw new ClientException("当前媒体标记为 DRM 加密，首版不支持此内容的离线下载");
+                if (truthy(business.opt("is_preview"))) throw new ClientException("当前账号仅获得试看内容，请在 B 站确认正片观看权限");
             }
         }
     }
@@ -310,57 +350,55 @@ public final class BiliClient {
     }
 
     private JSONObject checkedPayload(JSONObject response, String action) throws IOException {
-        if (!response.has("code")) throw new IOException(action + "：接口响应缺少状态码");
+        if (!response.has("code")) throw new ClientException(action + "：接口响应缺少状态码");
         int code = response.optInt("code", Integer.MIN_VALUE);
         if (code != 0) {
-            String message = nonEmpty(response.optString("message"), response.optString("msg"));
-            if ("0".equals(message)) message = "";
             String hint = "";
             if (code == -101) hint = "请在工具内登录 B 站";
             else if (code == -10403 || code == 10015002) hint = "当前账号或地区没有取得该视频的播放权限";
             else if (code == -412 || code == -352) hint = "B 站要求验证或限制了请求，请稍后重试";
             else if (code == -404) hint = "该视频不存在或当前不可用";
-            throw new IOException(action + "（" + code + "）" + (message.isEmpty() ? "" : "：" + message)
-                    + (hint.isEmpty() ? "" : "。" + hint));
+            // Server messages are untrusted and can contain request URLs or credentials.
+            throw new ClientException(action + "（" + code + "）" + (hint.isEmpty() ? "" : "。" + hint));
         }
         JSONObject info = response.optJSONObject("result");
         if (info == null) info = response.optJSONObject("data");
-        if (info == null) throw new IOException(action + "：接口未返回有效数据");
+        if (info == null) throw new ClientException(action + "：接口未返回有效数据");
         return info;
     }
 
     private JSONObject getJson(String address) throws IOException {
         URL url = trustedUrl(address);
         for (int redirect = 0; redirect <= 5; redirect++) {
-            if (!isBiliHost(url.getHost())) throw new IOException("接口跳转到了非 B 站地址，已停止请求");
+            if (!isBiliHost(url.getHost())) throw new ClientException("接口跳转到了非 B 站地址，已停止请求");
             HttpURLConnection connection = open(url);
             try {
                 int status = connection.getResponseCode();
                 if (isRedirect(status)) {
                     String location = connection.getHeaderField("Location");
-                    if (location == null) throw new IOException("接口跳转缺少目标地址");
+                    if (location == null) throw new ClientException("接口跳转缺少目标地址");
                     url = trustedUrl(new URL(url, location).toExternalForm());
                     continue;
                 }
-                if (status != 200) throw new IOException("B 站接口返回 HTTP " + status + (status == 412 ? "，请稍后重试或完成登录验证" : ""));
+                if (status != 200) throw new ClientException("B 站接口返回 HTTP " + status + (status == 412 ? "，请稍后重试或完成登录验证" : ""));
                 try (InputStream stream = connection.getInputStream(); ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
                     byte[] buffer = new byte[8192];
                     int count;
                     while ((count = stream.read(buffer)) != -1) {
-                        if (bytes.size() + count > MAX_RESPONSE_BYTES) throw new IOException("接口响应过大，已停止读取");
+                        if (bytes.size() + count > MAX_RESPONSE_BYTES) throw new ClientException("接口响应过大，已停止读取");
                         bytes.write(buffer, 0, count);
                     }
                     try {
                         return new JSONObject(bytes.toString(StandardCharsets.UTF_8.name()));
                     } catch (JSONException error) {
-                        throw new IOException("B 站接口未返回 JSON 数据，可能需要登录验证或接口已变化");
+                        throw new ClientException("B 站接口未返回 JSON 数据，可能需要登录验证或接口已变化");
                     }
                 }
             } finally {
                 connection.disconnect();
             }
         }
-        throw new IOException("接口跳转次数过多");
+        throw new ClientException("接口跳转次数过多");
     }
 
     private URL followShortLink(URL initial) throws IOException {
@@ -370,15 +408,15 @@ public final class BiliClient {
             HttpURLConnection connection = open(url);
             try {
                 int status = connection.getResponseCode();
-                if (!isRedirect(status)) throw new IOException("短链接没有跳转到视频页，请复制完整播放链接");
+                if (!isRedirect(status)) throw new ClientException("短链接没有跳转到视频页，请复制完整播放链接");
                 String location = connection.getHeaderField("Location");
-                if (location == null) throw new IOException("短链接缺少跳转地址");
+                if (location == null) throw new ClientException("短链接缺少跳转地址");
                 url = trustedUrl(new URL(url, location).toExternalForm());
             } finally {
                 connection.disconnect();
             }
         }
-        throw new IOException("短链接跳转次数过多");
+        throw new ClientException("短链接跳转次数过多");
     }
 
     private HttpURLConnection open(URL url) throws IOException {
@@ -397,13 +435,13 @@ public final class BiliClient {
 
     private static URL trustedUrl(String value) throws IOException {
         URL url;
-        try { url = new URL(value); } catch (Exception error) { throw new IOException("链接地址无效"); }
+        try { url = new URL(value); } catch (Exception error) { throw new ClientException("链接地址无效"); }
         String protocol = url.getProtocol().toLowerCase(Locale.ROOT);
         String host = url.getHost().toLowerCase(Locale.ROOT);
         if (!(protocol.equals("http") || protocol.equals("https")) || url.getUserInfo() != null
                 || !(isBiliHost(host) || isShortHost(host))
                 || (url.getPort() != -1 && url.getPort() != (protocol.equals("http") ? 80 : 443))) {
-            throw new IOException("仅接受 bilibili.com 或 b23.tv 的标准视频链接");
+            throw new ClientException("仅接受 bilibili.com 或 b23.tv 的标准视频链接");
         }
         // Login cookies are never sent over cleartext HTTP.
         return new URL("https", host, -1, url.getFile());
@@ -426,16 +464,36 @@ public final class BiliClient {
         return value.replaceAll("[)\\]}>，。；！？、]+$", "");
     }
 
-    private static String mediaUrl(JSONObject item) {
-        String value = nonEmpty(item.optString("baseUrl"), nonEmpty(item.optString("base_url"), item.optString("url")));
-        if (value.startsWith("//")) value = "https:" + value;
-        if (value.startsWith("http://")) value = "https://" + value.substring(7);
-        try {
-            URL url = new URL(value);
-            if (!"https".equalsIgnoreCase(url.getProtocol()) || url.getUserInfo() != null || url.getHost().isEmpty()) return "";
-            if (url.getPort() != -1 && url.getPort() != 443) return "";
-            return url.toExternalForm();
-        } catch (Exception ignored) { return ""; }
+    private static ArrayList<String> mediaUrls(JSONObject item) {
+        ArrayList<String> raw = new ArrayList<>();
+        for (String key : new String[]{"baseUrl", "base_url", "url"}) {
+            Object value = item.opt(key);
+            if (value instanceof String) raw.add((String) value);
+        }
+        for (String key : new String[]{"backupUrl", "backup_url"}) {
+            Object value = item.opt(key);
+            if (value instanceof JSONArray) {
+                JSONArray values = (JSONArray) value;
+                for (int i = 0; i < values.length(); i++) {
+                    Object candidate = values.opt(i);
+                    if (candidate instanceof String) raw.add((String) candidate);
+                }
+            } else if (value instanceof String) raw.add((String) value);
+        }
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        for (String value : raw) {
+            String https = Quality.httpsMediaUrl(value);
+            if (!https.isEmpty()) candidates.add(https);
+        }
+        // Prefer every exact HTTPS address before retaining the old client's HTTP
+        // upgrade behavior. Never rewrite an existing HTTPS signature or CDN host.
+        for (String value : raw) {
+            if (value.regionMatches(true, 0, "http://", 0, 7)) {
+                String https = Quality.httpsMediaUrl("https://" + value.substring(7));
+                if (!https.isEmpty()) candidates.add(https);
+            }
+        }
+        return new ArrayList<>(candidates);
     }
 
     private static void addMediaHeaders(Quality quality) {

@@ -6,7 +6,6 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.database.StandaloneDatabaseProvider;
 import androidx.media3.datasource.DefaultDataSource;
-import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.datasource.cache.CacheDataSource;
 import androidx.media3.datasource.cache.NoOpCacheEvictor;
 import androidx.media3.datasource.cache.SimpleCache;
@@ -24,8 +23,10 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 
 @UnstableApi
@@ -39,9 +40,10 @@ public final class MediaRepository {
     private final Store store;
     private final SimpleCache cache;
     private final DefaultDataSource.Factory upstream;
+    private final Map<String, MediaHttpDataSource.Request> routes = new ConcurrentHashMap<>();
     final DownloadManager manager;
     public static final class OfflineItem {
-        public String key, episodeId, title, qualityLabel, status;
+        public String key, episodeId, title, qualityLabel, status, errorDetail;
         public Models.Episode episode;
         public Models.Quality quality;
         public boolean complete, failed, paused;
@@ -53,16 +55,42 @@ public final class MediaRepository {
         store = new Store(context);
         StandaloneDatabaseProvider database = new StandaloneDatabaseProvider(context);
         cache = new SimpleCache(new File(context.getFilesDir(), "offline-media"), new NoOpCacheEvictor(), database);
-        DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
-            .setConnectTimeoutMs(20000).setReadTimeoutMs(30000)
-            .setDefaultRequestProperties(Collections.singletonMap("Referer", "https://www.bilibili.com/"));
+        // Restore routes before the manager can resume persisted requests after process death.
+        for (JSONObject saved : store.savedDownloads()) {
+            try { register(saved.getString("key"), Models.Quality.fromJson(saved.getJSONObject("quality"))); }
+            catch (Exception ignored) { }
+        }
+        MediaHttpDataSource.Factory http = new MediaHttpDataSource.Factory(spec -> {
+            MediaHttpDataSource.Request route = spec.key == null ? null : routes.get(spec.key);
+            return route == null ? routes.get(spec.uri.toString()) : route;
+        });
         // Login cookies are used only by BiliClient. Never send account cookies to media CDNs.
         upstream = new DefaultDataSource.Factory(context, http);
         CacheDataSource.Factory data = new CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(upstream);
         manager = new DownloadManager(context, new androidx.media3.exoplayer.offline.DefaultDownloadIndex(database),
             new DefaultDownloaderFactory(data, Executors.newFixedThreadPool(3)));
         manager.setMaxParallelDownloads(2);
+        manager.addListener(new DownloadManager.Listener() {
+            @Override public void onDownloadChanged(DownloadManager downloadManager, Download download, Exception finalException) {
+                if (finalException != null) store.saveDownloadError(download.request.id, MediaErrors.describe(finalException));
+                else if (download.state == Download.STATE_COMPLETED) store.clearDownloadError(download.request.id);
+            }
+        });
+    }
+    private void register(String key, Models.Quality q) {
+        registerTrack(key + ":v", q.videoCandidates(), q.headers, "视频");
+        if (hasAudio(q)) registerTrack(key + ":a", q.audioCandidates(), q.headers, "音轨");
+    }
+    private void registerTrack(String id, List<String> urls, Map<String, String> qualityHeaders, String label) {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", BiliClient.USER_AGENT);
+        headers.put("Referer", BiliClient.REFERER);
+        headers.put("Origin", "https://www.bilibili.com");
+        if (qualityHeaders != null) headers.putAll(qualityHeaders);
+        // The data source applies a final public-header allowlist on every attempt.
+        MediaHttpDataSource.Request request = new MediaHttpDataSource.Request(new ArrayList<>(urls), headers, label);
+        routes.put(id, request);
+        for (String url : urls) routes.put(url, request);
     }
     public static String key(Models.Episode e, Models.Quality q) {
         try {
@@ -88,6 +116,9 @@ public final class MediaRepository {
                 remove(old);
         }
         store.saveDownload(key, e, q);
+        register(key, q);
+        store.clearDownloadError(key + ":v");
+        store.clearDownloadError(key + ":a");
         addTrack(key + ":v", q.videoUrl);
         if (q.audioUrl != null && !q.audioUrl.isEmpty()) addTrack(key + ":a", q.audioUrl);
         DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true);
@@ -124,6 +155,7 @@ public final class MediaRepository {
                 boolean audioNeeded = hasAudio(item.quality);
                 item.complete = complete(video) && (!audioNeeded || complete(audio));
                 item.failed = failed(video) || failed(audio);
+                item.errorDetail = failureDetail(item.key, video, audio);
                 item.paused = !item.complete && !item.failed && manager.getDownloadsPaused();
                 item.bytesDownloaded = bytes(video) + bytes(audio);
                 long total = total(video) + (audioNeeded ? total(audio) : 0);
@@ -141,6 +173,17 @@ public final class MediaRepository {
         return items;
     }
     private boolean complete(Download d) { return d != null && d.state == Download.STATE_COMPLETED; }
+    private String failureDetail(String key, Download video, Download audio) {
+        StringBuilder detail = new StringBuilder();
+        if (failed(video)) appendFailure(detail, "视频", store.downloadError(key + ":v"));
+        if (failed(audio)) appendFailure(detail, "音轨", store.downloadError(key + ":a"));
+        return detail.toString();
+    }
+    private void appendFailure(StringBuilder detail, String label, String failure) {
+        if (detail.length() > 0) detail.append("\n\n");
+        detail.append(label).append("下载失败\n").append(failure.isEmpty()
+            ? "旧任务未保存 HTTP 详情，请重新解析重试后查看。" : failure);
+    }
     private boolean failed(Download d) { return d != null && d.state == Download.STATE_FAILED; }
     private long bytes(Download d) { return d == null ? 0 : d.getBytesDownloaded(); }
     private long total(Download d) { return d == null || d.contentLength < 0 ? 0 : d.contentLength; }
@@ -152,6 +195,7 @@ public final class MediaRepository {
         if (e.localUri != null && !e.localUri.isEmpty())
             return new DefaultMediaSourceFactory(context).createMediaSource(MediaItem.fromUri(e.localUri));
         if (offline && !isDownloaded(e, q)) throw new IllegalStateException("这一清晰度尚未完整下载");
+        if (!offline) register(key(e, q), q);
         CacheDataSource.Factory data = new CacheDataSource.Factory().setCache(cache)
             .setCacheWriteDataSinkFactory(null).setUpstreamDataSourceFactory(offline ? null : upstream);
         String key = key(e, q);

@@ -7,7 +7,10 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.net.URL;
 
 /** Small, stable local-storage models. Session cookies are never stored here. */
 public final class Models {
@@ -92,6 +95,10 @@ public final class Models {
         public String videoUrl = "";
         /** Empty for a single file that already contains both audio and video. */
         public String audioUrl = "";
+        /** Ordered, deduplicated HTTPS candidates returned for this exact video track. */
+        public ArrayList<String> videoUrls = new ArrayList<>();
+        /** Ordered, deduplicated HTTPS candidates returned for this exact audio track. */
+        public ArrayList<String> audioUrls = new ArrayList<>();
         /** Public media request headers only. Never contains login cookies. */
         public Map<String, String> headers = new LinkedHashMap<>();
 
@@ -102,8 +109,12 @@ public final class Models {
             for (Map.Entry<String, String> entry : headers.entrySet()) {
                 if (isPublicMediaHeader(entry.getKey())) headerJson.put(entry.getKey(), entry.getValue());
             }
+            List<String> videos = videoCandidates();
+            List<String> audios = audioCandidates();
             return new JSONObject().put("id", id).put("label", label).put("qn", qn)
-                    .put("videoUrl", videoUrl).put("audioUrl", audioUrl).put("headers", headerJson);
+                    .put("videoUrl", first(videos)).put("audioUrl", first(audios))
+                    .put("videoUrls", new JSONArray(videos)).put("audioUrls", new JSONArray(audios))
+                    .put("headers", headerJson);
         }
 
         public static Quality fromJson(JSONObject json) {
@@ -114,6 +125,10 @@ public final class Models {
             quality.qn = json.optInt("qn", 0);
             quality.videoUrl = json.optString("videoUrl", "");
             quality.audioUrl = json.optString("audioUrl", "");
+            quality.videoUrls = candidates(quality.videoUrl, strings(json.optJSONArray("videoUrls")));
+            quality.audioUrls = candidates(quality.audioUrl, strings(json.optJSONArray("audioUrls")));
+            quality.videoUrl = first(quality.videoUrls);
+            quality.audioUrl = first(quality.audioUrls);
             JSONObject headerJson = json.optJSONObject("headers");
             if (headerJson != null) {
                 Iterator<String> keys = headerJson.keys();
@@ -123,6 +138,55 @@ public final class Models {
                 }
             }
             return quality;
+        }
+
+        /** These helpers also accept a legacy single-URL record or an unsaved Quality. */
+        public ArrayList<String> videoCandidates() { return candidates(videoUrl, videoUrls); }
+
+        public ArrayList<String> audioCandidates() { return candidates(audioUrl, audioUrls); }
+
+        private static ArrayList<String> candidates(String primary, List<String> alternatives) {
+            LinkedHashSet<String> values = new LinkedHashSet<>();
+            String first = httpsMediaUrl(primary);
+            if (!first.isEmpty()) values.add(first);
+            if (alternatives != null) {
+                for (String candidate : alternatives) {
+                    String normalized = httpsMediaUrl(candidate);
+                    if (!normalized.isEmpty()) values.add(normalized);
+                }
+            }
+            return new ArrayList<>(values);
+        }
+
+        private static ArrayList<String> strings(JSONArray array) {
+            ArrayList<String> values = new ArrayList<>();
+            if (array != null) {
+                for (int i = 0; i < array.length(); i++) {
+                    Object value = array.opt(i);
+                    if (value instanceof String) values.add((String) value);
+                }
+            }
+            return values;
+        }
+
+        private static String first(List<String> values) { return values.isEmpty() ? "" : values.get(0); }
+
+        /** Validate syntax without changing a CDN path, signature, query or port. */
+        static String httpsMediaUrl(String value) {
+            if (value == null || value.isEmpty()) return "";
+            if (value.startsWith("//")) value = "https:" + value;
+            for (int i = 0; i < value.length(); i++) {
+                char ch = value.charAt(i);
+                if (ch <= 32 || ch == 127) return "";
+            }
+            try {
+                URL url = new URL(value);
+                if (!"https".equalsIgnoreCase(url.getProtocol()) || url.getUserInfo() != null
+                        || url.getHost().isEmpty() || url.getRef() != null
+                        || (url.getPort() != -1 && (url.getPort() < 1 || url.getPort() > 65535))) return "";
+                url.toURI();
+                return url.toExternalForm();
+            } catch (Exception ignored) { return ""; }
         }
 
         private static boolean isPublicMediaHeader(String key) {

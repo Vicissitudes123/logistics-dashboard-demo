@@ -87,6 +87,12 @@ public final class Store {
     public synchronized void deleteDownload(String key) {
         List<JSONObject> all = savedDownloads();
         all.removeIf(j -> key.equals(j.optString("key")));
-        prefs.edit().putString("downloads", new JSONArray(all).toString()).apply();
+        prefs.edit().putString("downloads", new JSONArray(all).toString())
+            .remove("downloadError:" + key + ":v").remove("downloadError:" + key + ":a").apply();
     }
+    public String downloadError(String trackId) { return prefs.getString("downloadError:" + trackId, ""); }
+    public void saveDownloadError(String trackId, String safeDetail) {
+        prefs.edit().putString("downloadError:" + trackId, safeDetail).apply();
+    }
+    public void clearDownloadError(String trackId) { prefs.edit().remove("downloadError:" + trackId).apply(); }
 }
