@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "versionCode": 9,
+  "versionName": "0.1.8",
+  "packageName": "com.animeshelf.app",
+  "minSdk": 26,
+  "apkUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.8.apk",
+  "zipUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.8-install.zip",
+  "apkSha256": "3858b58733e3f9cca1fa69e17592c43f6e77d608b3618b1a2cc139990dda5cb5",
+  "zipSha256": "f82786c898be68ad767b8553a15b41f4f39a2f3b2897a91e7ad7b0a115d806ba",
+  "apkBytes": 5021705,
+  "zipBytes": 5021845,
+  "notes": [
+    "新增应用内手动检查更新。",
+    "仅 Wi-Fi 下载默认开启，允许移动网络下载前会再次确认。",
+    "每部番剧可分别设置跳过片头片尾，默认关闭，本集可暂时取消。",
+    "首页新增全部、未看完、已看完、有离线视频筛选，可结合搜索。"
+  ],
+  "sourceCommit": "f3493c20cb4fa5446bd4b4fee6550a1de35d5382"
+}
