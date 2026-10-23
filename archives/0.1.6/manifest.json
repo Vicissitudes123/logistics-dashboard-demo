@@ -1,0 +1,234 @@
+{
+  "archive_name": "anime-shelf-0.1.6-20261023",
+  "archived_date_utc": "2026-10-23",
+  "repository": "Vicissitudes123/logistics-dashboard-demo",
+  "archive_branch": "archive/anime-shelf-0.1.6-20261023",
+  "snapshot_commit": "1f21e9b8ca9d009797f20d95551558472f1021f7",
+  "snapshot_tree": "cc55377bea1d23f4d27466678f155986f0d7e0c3",
+  "build_source_commit": "25d11edacd40205151642830b6d5de54bd1d5f0f",
+  "delivery_commit": "c1c2570d311b7cc8550dd6210dc413851322e9c1",
+  "package": "com.animeshelf.app",
+  "version": "0.1.6",
+  "version_code": 7,
+  "certificate_sha256": "0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c",
+  "workflow_run": 39728043508,
+  "parser_assertions": 105,
+  "junit": {
+    "tests": 127,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "name": "anime-shelf-0.1.6.apk",
+      "bytes": 4963965,
+      "sha256": "ef263850d3f523b5515a9ab4ca701791da2bfa2096c3737ef74be008608f1eda",
+      "git_blob": "8482aec5d4db2f387ec419526aefcd1ef342d9c5"
+    },
+    {
+      "name": "anime-shelf-0.1.6-install.zip",
+      "bytes": 4964105,
+      "sha256": "724d65c0aab5e5b872c9e70c9bfaa5be8a328e811c260b9c48d73900dab2f1b0",
+      "git_blob": "18c5a433447d8a41136490e6e66273110b433ae7"
+    }
+  ],
+  "local_source_archive": {
+    "name": "anime-shelf-0.1.6-source.zip",
+    "bytes": 138874,
+    "sha256": "2e6378ddd91c1162ff8ba6bf5fad23a8682885e7c4c2cdbeb6f42398f1f0ee22"
+  },
+  "source_files": [
+    {
+      "path": ".github/workflows/build-apk.yml",
+      "git_blob": "ad609836845210da8bd4dbd82af08dfbfd07dd71"
+    },
+    {
+      "path": ".github/workflows/deliver-apk.yml",
+      "git_blob": "7dea2b318baf585370da83693bad5aeae3b6dec9"
+    },
+    {
+      "path": ".gitignore",
+      "git_blob": "38fdbd2f63a45b58a73074315d972693fcdda13c"
+    },
+    {
+      "path": "BUILD_STATUS.md",
+      "git_blob": "635b259a9d605b83fdf81afde53c61195b622778"
+    },
+    {
+      "path": "README.md",
+      "git_blob": "16d4d6043cf9561481fb00a4dc8503e4f080a92a"
+    },
+    {
+      "path": "app/build.gradle",
+      "git_blob": "1655e0b6661785cabc8cc4c5ea355a40011c1ad9"
+    },
+    {
+      "path": "app/src/main/AndroidManifest.xml",
+      "git_blob": "1b2db5d0e5d421a439602ad6f10737cf3d659ef2"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/AnimeDownloadService.java",
+      "git_blob": "7ad74a0e3274a63f8c0d3b954523da3e2cff6384"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/BatchDownloadSession.java",
+      "git_blob": "29fe6646682ab75d0428e94a127d782d881ae9e6"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/BiliClient.java",
+      "git_blob": "7154300f8fe9efe2a2b4db042083a98032ff1cd4"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadCatalogue.java",
+      "git_blob": "0effb6b33b7c401372334395e0deb3eebc4993db"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/LibraryCatalogue.java",
+      "git_blob": "3e241c6d17024d445bba08e9c6983e65bbfc1836"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/LoginActivity.java",
+      "git_blob": "189446bd7340dec19ed4f60f8887f7b9459541cd"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MainActivity.java",
+      "git_blob": "cf99d90dc60c7826c7db44a98a0e3b7757af81c8"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MediaErrors.java",
+      "git_blob": "386cb2ab9e26ec602c134bb8262b91ab8f12bf17"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MediaHttpDataSource.java",
+      "git_blob": "ca66e5da35b0ce8769396d286a6ea748e04c7b5a"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MediaRepository.java",
+      "git_blob": "92e9693d6c8b98fd7786a1ea6c635df2f66821f8"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/Models.java",
+      "git_blob": "a045f9ac3d9a1ab5d8a6b32c4f57de535157bfdf"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PlaybackGestures.java",
+      "git_blob": "367e553a352aea1990234048ad3c05f722bbbff5"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PlayerOverlay.java",
+      "git_blob": "4aa88bff3d273ee06cb57c2f9274cb12ac026ada"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/Store.java",
+      "git_blob": "e14c9656c6a7706e09b316d2515e221a74ba01d7"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/ThemePalette.java",
+      "git_blob": "c106fe95e3e9dd6f148acb2031203954528d7963"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/VideoDiagnostics.java",
+      "git_blob": "e13ceb6f5b99094ba01feebfc6cb5adef04d24ca"
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_download.xml",
+      "git_blob": "d5588719f93b3148e243d002ad2d646306f32ccf"
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_launcher.xml",
+      "git_blob": "33a087b50dece4da606373e19ef6456cb27c107d"
+    },
+    {
+      "path": "app/src/main/res/layout/player_surface.xml",
+      "git_blob": "a864f15fdf7f9d0a9713b639417f919b69fe5806"
+    },
+    {
+      "path": "app/src/main/res/values/strings.xml",
+      "git_blob": "e849d64cb76d3857baf822a9c9eb46e2b5fc2d02"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/BatchDownloadSessionTest.java",
+      "git_blob": "fe2178a396ac63af7b4344bbb7aa648ae0681d88"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadCatalogueTest.java",
+      "git_blob": "5bc7f07dbbe5f4f29cc160d4a7c92bf88dc87815"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/LibraryCatalogueTest.java",
+      "git_blob": "c8684ae27edc4f1f41b56ca0bf0f9ec874217c35"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainLibraryTest.java",
+      "git_blob": "ce6b9700648fa4dbb18606674379bbc86791e9e8"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainNavigationTest.java",
+      "git_blob": "6af374d23de42d8441fe96952df4d35bc88b3b28"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainSelectionTest.java",
+      "git_blob": "6e5edd9c43d1a6110ebf886f96cb651e1e1b1643"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MediaErrorsTest.java",
+      "git_blob": "7bf28f6916243579117eed1c7661eb9f00b25606"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MediaHttpDataSourceTest.java",
+      "git_blob": "9a5292797ace9ba878a35265d59f23b110ca3983"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlaybackGesturesTest.java",
+      "git_blob": "c6c5fe07693033172e00531db5e96ba750ff070a"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlayerOverlayDensityTest.java",
+      "git_blob": "44d124b71bbf0d0e604638c9f383a553be307d23"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlayerOverlayTest.java",
+      "git_blob": "a216aa91c6d51f1a29235d0db207020bbb242c3b"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/StoreSettingsTest.java",
+      "git_blob": "dc5e35e58d843534f999f5f0b4d08f4cdb45d076"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/VideoDiagnosticsTest.java",
+      "git_blob": "3230a4f268fb7601d4bda61175df51611fceb7bf"
+    },
+    {
+      "path": "build.gradle",
+      "git_blob": "5b7ccba7c566afb5057eaea1b10b99b083851fe4"
+    },
+    {
+      "path": "gradle.properties",
+      "git_blob": "2e11322913e56c04783e2f5dbe7927b9e0539007"
+    },
+    {
+      "path": "gradle/wrapper/gradle-wrapper.properties",
+      "git_blob": "09523c0e5490700d1a647ecf95309b5f7f9a8199"
+    },
+    {
+      "path": "gradlew",
+      "git_blob": "145bbb6cd891a1239f5771716ed3df8f7ff69168"
+    },
+    {
+      "path": "settings.gradle",
+      "git_blob": "e44844742e7607990c92cb1fb1197dc2acd19d67"
+    },
+    {
+      "path": "tests/ParserSelfTest.java",
+      "git_blob": "eda5f1b1435cde3f8d425cef4d17be469381994f"
+    },
+    {
+      "path": "tests/probe_media_request.py",
+      "git_blob": "2ceb39b1f49012a9d74f8f5043399325937b8b2a"
+    }
+  ],
+  "phone_user_data_included": false,
+  "signing_private_key_included": false,
+  "rollback_strategy": "Restore source from snapshot in an isolated branch. Preserve package and signing identity; use a versionCode higher than the installed build and verify data compatibility before issuing an update APK. Do not uninstall to downgrade."
+}
