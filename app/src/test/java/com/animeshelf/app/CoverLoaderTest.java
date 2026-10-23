@@ -28,10 +28,14 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
+import org.robolectric.annotation.GraphicsMode;
 import org.robolectric.annotation.LooperMode;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
+// Exercise Android's PNG codec and sampling. Legacy graphics applies ImageIO's PNG
+// compression quality, which makes quality=100 uncompressed rather than ignored.
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @LooperMode(LooperMode.Mode.PAUSED)
 public class CoverLoaderTest {
     private static final String FIRST = "https://i0.hdslb.com/bfs/bangumi/one.jpg";
@@ -205,8 +209,14 @@ public class CoverLoaderTest {
     private static byte[] png(int width, int height) {
         Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes);
-        bitmap.recycle(); return bytes.toByteArray();
+        try {
+            assertTrue("Fixture must be a successfully encoded PNG",
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes));
+        } finally { bitmap.recycle(); }
+        assertTrue("Fixture must contain image bytes", bytes.size() > 0);
+        assertTrue("Valid image fixtures must fit the production download limit",
+                bytes.size() < CoverLoader.MAX_IMAGE_BYTES);
+        return bytes.toByteArray();
     }
 
     private static void deleteTree(File file) {
