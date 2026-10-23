@@ -8,7 +8,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import androidx.media3.common.util.UnstableApi;
-import androidx.media3.datasource.cache.SimpleCache;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
@@ -60,16 +59,9 @@ public class MainSelectionTest {
         AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
         if (dialog != null && dialog.isShowing()) dialog.dismiss();
         if (controller != null) controller.pause().stop().destroy();
-        Field singleton = MediaRepository.class.getDeclaredField("instance");
-        singleton.setAccessible(true);
+        Field singleton = MediaRepository.class.getDeclaredField("instance"); singleton.setAccessible(true);
         MediaRepository active = (MediaRepository) singleton.get(null);
-        if (active != null) {
-            active.manager.release();
-            Field cache = MediaRepository.class.getDeclaredField("cache");
-            cache.setAccessible(true);
-            ((SimpleCache) cache.get(active)).release();
-            singleton.set(null, null);
-        }
+        if (active != null) active.releaseForTests();
     }
 
     @Test public void episodeLongPressSelectsItAndSubsequentTapsOnlyToggleSelection() throws Exception {

@@ -17,6 +17,7 @@ public final class LibraryBackup {
     public static final int MAX_BYTES = 4 * 1024 * 1024;
     public static final int MAX_SERIES = 1000;
     public static final int MAX_EPISODES = 20000;
+    public static final int CURRENT_VERSION = 2;
     private static final long MAX_DURATION_MS = 7L * 24 * 60 * 60 * 1000;
     private static final String FORMAT = "anime-shelf-library";
     private LibraryBackup() { }
@@ -25,15 +26,21 @@ public final class LibraryBackup {
     public static final class Snapshot {
         public final int seriesCount, episodeCount, progressCount, skippedLocalEpisodes;
         private final String document;
+        private final Boolean wifiOnly;
         private Snapshot(JSONObject source, int episodes, int progress, int locals) throws JSONException {
             document = source.toString();
             seriesCount = source.getJSONArray("series").length();
             episodeCount = episodes; progressCount = progress; skippedLocalEpisodes = locals;
+            JSONObject settings = source.getJSONObject("settings");
+            wifiOnly = settings.has("wifiOnlyDownloads") ? settings.getBoolean("wifiOnlyDownloads") : null;
         }
         JSONObject data() throws JSONException { return new JSONObject(document); }
+        /** Null means a version 1 backup: the phone's current network setting will be retained. */
+        public Boolean wifiOnlyDownloads() { return wifiOnly; }
         public String summary() {
             return seriesCount + " 部番剧、" + episodeCount + " 集、" + progressCount + " 条观看记录。"
                 + "\n合并片库，保留本机更新的观看进度；偏好、置顶、隐藏及手工看完标记采用备份。"
+                + (Boolean.FALSE.equals(wifiOnly) ? "\n此备份允许移动网络下载，恢复后下载可能消耗手机流量。" : "")
                 + (skippedLocalEpisodes > 0 ? "\n其中 " + skippedLocalEpisodes + " 集本地视频及其观看记录不会恢复，需重新导入文件。" : "")
                 + "\n备份不含视频文件、下载任务、登录信息或本地文件访问授权。";
         }
@@ -62,7 +69,7 @@ public final class LibraryBackup {
             JSONObject root = (JSONObject) parsed;
             keys(root, "format", "version", "exportedAt", "lastSeries", "series", "progress", "settings");
             require(FORMAT.equals(string(root, "format", 64, false)), "不是番匣片库备份");
-            require(integer(root, "version", 1, 1) == 1, "不支持此备份版本");
+            int version = (int) integer(root, "version", 1, CURRENT_VERSION);
             integer(root, "exportedAt", 0, latestTimestamp());
             String lastSeries = id(root, "lastSeries", true);
             JSONArray series = array(root, "series", MAX_SERIES);
@@ -72,7 +79,8 @@ public final class LibraryBackup {
             int episodeCount = 0, localCount = 0;
             for (int i = 0; i < series.length(); i++) {
                 JSONObject item = object(series, i);
-                keys(item, "id", "title", "coverUrl", "pinned", "hidden", "watched", "lastEpisodeId", "episodes");
+                if (version == 1) keys(item, "id", "title", "coverUrl", "pinned", "hidden", "watched", "lastEpisodeId", "episodes");
+                else keys(item, "id", "title", "coverUrl", "pinned", "hidden", "watched", "skip", "lastEpisodeId", "episodes");
                 String seriesId = id(item, "id", false);
                 require(seriesIds.add(seriesId), "备份含重复番剧 ID");
                 string(item, "title", 512, false);
@@ -81,6 +89,7 @@ public final class LibraryBackup {
                 bool(item, "pinned"); bool(item, "hidden");
                 String watched = string(item, "watched", 4, false);
                 require("auto".equals(watched) || "yes".equals(watched) || "no".equals(watched), "看完标记无效");
+                if (version >= 2) readSkip(object(item, "skip"));
                 String lastEpisode = id(item, "lastEpisodeId", true);
                 JSONArray episodes = array(item, "episodes", MAX_EPISODES);
                 episodeCount += episodes.length();
@@ -126,7 +135,7 @@ public final class LibraryBackup {
                 boolean completed = bool(item, "completed");
                 require(!completed || (position > 0 && duration > 0 && position >= duration - 1000), "看完状态与观看进度不一致");
             }
-            validateSettings(object(root, "settings"));
+            validateSettings(object(root, "settings"), version);
             return new Snapshot(root, episodeCount, progress.length(), localCount);
         } catch (IllegalArgumentException exception) {
             throw exception;
@@ -137,7 +146,7 @@ public final class LibraryBackup {
     }
 
     static JSONObject document(JSONArray series, JSONArray progress, JSONObject settings, String lastSeries) throws JSONException {
-        return new JSONObject().put("format", FORMAT).put("version", 1).put("exportedAt", System.currentTimeMillis())
+        return new JSONObject().put("format", FORMAT).put("version", CURRENT_VERSION).put("exportedAt", System.currentTimeMillis())
             .put("lastSeries", lastSeries).put("series", series).put("progress", progress).put("settings", settings);
     }
 
@@ -198,8 +207,18 @@ public final class LibraryBackup {
         catch (NumberFormatException ignored) { return false; }
     }
 
-    private static void validateSettings(JSONObject value) throws JSONException {
-        keys(value, "theme", "speed", "holdSpeed", "controlsTimeoutMs", "autoNext", "rememberQuality", "preferredQuality");
+    static Store.SkipSettings readSkip(JSONObject value) throws JSONException {
+        keys(value, "enabled", "introSeconds", "outroSeconds");
+        boolean enabled = bool(value, "enabled");
+        int intro = (int) integer(value, "introSeconds", 0, 600);
+        int outro = (int) integer(value, "outroSeconds", 0, 600);
+        return new Store.SkipSettings(enabled, intro, outro);
+    }
+
+    private static void validateSettings(JSONObject value, int version) throws JSONException {
+        if (version == 1) keys(value, "theme", "speed", "holdSpeed", "controlsTimeoutMs", "autoNext", "rememberQuality", "preferredQuality");
+        else keys(value, "theme", "speed", "holdSpeed", "controlsTimeoutMs", "autoNext", "rememberQuality", "preferredQuality",
+            "wifiOnlyDownloads", "libraryFilter");
         String theme = string(value, "theme", 16, false);
         require(theme.equals(ThemePalette.get(theme).id), "主题设置无效");
         double speed = number(value, "speed");
@@ -209,6 +228,11 @@ public final class LibraryBackup {
         long timeout = integer(value, "controlsTimeoutMs", 0, 8000);
         require(timeout == 0 || timeout == 3500 || timeout == 5000 || timeout == 8000, "控制栏隐藏时间无效");
         bool(value, "autoNext"); bool(value, "rememberQuality");
+        if (version >= 2) {
+            bool(value, "wifiOnlyDownloads");
+            String filter = string(value, "libraryFilter", 16, false);
+            require("all".equals(filter) || "unfinished".equals(filter) || "watched".equals(filter) || "offline".equals(filter), "片库筛选设置无效");
+        }
         Object profile = value.get("preferredQuality");
         require(profile == JSONObject.NULL || profile instanceof JSONObject, "默认清晰度格式无效");
         if (profile instanceof JSONObject) readProfile((JSONObject) profile);

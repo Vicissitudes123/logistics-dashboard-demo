@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -151,6 +152,43 @@ public final class Store {
     public void setAutoNext(boolean enabled) { prefs.edit().putBoolean("autoNext", enabled).apply(); }
     public boolean isRememberQuality() { return booleanPreference("rememberQuality", true); }
     public void setRememberQuality(boolean enabled) { prefs.edit().putBoolean("rememberQuality", enabled).apply(); }
+    public boolean isWifiOnlyDownloads() { return booleanPreference("wifiOnlyDownloads", true); }
+    public void setWifiOnlyDownloads(boolean enabled) { prefs.edit().putBoolean("wifiOnlyDownloads", enabled).apply(); }
+    public String getLibraryFilter() {
+        try { return libraryFilter(prefs.getString("libraryFilter", "all")); }
+        catch (ClassCastException ignored) { return "all"; }
+    }
+    public void setLibraryFilter(String filter) { prefs.edit().putString("libraryFilter", libraryFilter(filter)).apply(); }
+    private static String libraryFilter(String filter) {
+        String normalized = filter == null ? "" : filter.trim().toLowerCase(Locale.ROOT);
+        return "unfinished".equals(normalized) || "watched".equals(normalized) || "offline".equals(normalized) ? normalized : "all";
+    }
+
+    public static final class SkipSettings {
+        public final boolean enabled;
+        public final int introSeconds, outroSeconds;
+        public SkipSettings(boolean enabled, int introSeconds, int outroSeconds) {
+            this.enabled = enabled;
+            this.introSeconds = Math.max(0, Math.min(600, introSeconds));
+            this.outroSeconds = Math.max(0, Math.min(600, outroSeconds));
+        }
+        JSONObject toJson() throws org.json.JSONException {
+            return new JSONObject().put("enabled", enabled).put("introSeconds", introSeconds).put("outroSeconds", outroSeconds);
+        }
+    }
+    public SkipSettings getSkipSettings(String seriesId) {
+        if (validId(seriesId)) try {
+            String value = prefs.getString("skip:" + seriesId, "");
+            if (!value.isEmpty()) return LibraryBackup.readSkip(new JSONObject(value));
+        } catch (Exception ignored) { }
+        return new SkipSettings(false, 0, 0);
+    }
+    public void setSkipSettings(String seriesId, boolean enabled, int introSeconds, int outroSeconds) {
+        if (!validId(seriesId)) return;
+        try {
+            prefs.edit().putString("skip:" + seriesId, new SkipSettings(enabled, introSeconds, outroSeconds).toJson().toString()).apply();
+        } catch (org.json.JSONException exception) { throw new IllegalStateException("无法保存片头片尾设置", exception); }
+    }
     private boolean booleanPreference(String key, boolean fallback) {
         try { return prefs.getBoolean(key, fallback); }
         catch (ClassCastException ignored) { return fallback; }
@@ -196,7 +234,8 @@ public final class Store {
     /** Reset preferences only: library membership, pins, history, login and downloads survive. */
     public void resetAppearanceAndPlaybackSettings() {
         prefs.edit().remove("theme").remove("speed").remove("holdSpeed").remove("controlsTimeoutMs")
-            .remove("autoNext").remove("rememberQuality").remove("preferredQuality").apply();
+            .remove("autoNext").remove("rememberQuality").remove("preferredQuality")
+            .remove("wifiOnlyDownloads").remove("libraryFilter").apply();
     }
 
     /** Export by an explicit field allowlist, never by copying SharedPreferences or media JSON. */
@@ -225,6 +264,7 @@ public final class Store {
                 seriesJson.put(new JSONObject().put("id", series.id).put("title", series.title)
                     .put("coverUrl", Models.safeCoverUrl(series.coverUrl)).put("pinned", isPinned(series.id))
                     .put("hidden", booleanPreference("hidden:" + series.id, false)).put("watched", watchedOverride(series.id))
+                    .put("skip", getSkipSettings(series.id).toJson())
                     .put("lastEpisodeId", episodeIds.contains(last) ? last : "").put("episodes", episodes));
                 exportedIds.add(series.id);
             }
@@ -232,6 +272,7 @@ public final class Store {
             JSONObject settings = new JSONObject().put("theme", getThemeId()).put("speed", getSpeed())
                 .put("holdSpeed", getHoldSpeed()).put("controlsTimeoutMs", getControlsTimeoutMs())
                 .put("autoNext", isAutoNext()).put("rememberQuality", isRememberQuality())
+                .put("wifiOnlyDownloads", isWifiOnlyDownloads()).put("libraryFilter", getLibraryFilter())
                 .put("preferredQuality", profile == null ? JSONObject.NULL : profile);
             String lastSeries = getLastSeries();
             String document = LibraryBackup.document(seriesJson, progressJson, settings,
@@ -349,6 +390,7 @@ public final class Store {
                 edit.putBoolean("pinned:" + id, item.getBoolean("pinned")).putBoolean("hidden:" + id, item.getBoolean("hidden"));
                 String watched = item.getString("watched");
                 if ("auto".equals(watched)) edit.remove("watched:" + id); else edit.putBoolean("watched:" + id, "yes".equals(watched));
+                if (item.has("skip")) edit.putString("skip:" + id, LibraryBackup.readSkip(item.getJSONObject("skip")).toJson().toString());
             }
             for (Map.Entry<String, String> entry : progressWrites.entrySet()) edit.putString("progress:" + entry.getKey(), entry.getValue());
             for (Map.Entry<String, String> entry : lastEpisodes.entrySet()) edit.putString("last:" + entry.getKey(), entry.getValue());
@@ -356,6 +398,10 @@ public final class Store {
             edit.putString("theme", settings.getString("theme")).putFloat("speed", (float) settings.getDouble("speed"))
                 .putFloat("holdSpeed", (float) settings.getDouble("holdSpeed")).putInt("controlsTimeoutMs", settings.getInt("controlsTimeoutMs"))
                 .putBoolean("autoNext", settings.getBoolean("autoNext")).putBoolean("rememberQuality", settings.getBoolean("rememberQuality"));
+            // Version 1 had no network/filter/skip preferences. An old backup must
+            // not overwrite newer per-device choices that it could not contain.
+            if (settings.has("wifiOnlyDownloads")) edit.putBoolean("wifiOnlyDownloads", settings.getBoolean("wifiOnlyDownloads"));
+            if (settings.has("libraryFilter")) edit.putString("libraryFilter", settings.getString("libraryFilter"));
             if (profile == null) edit.remove("preferredQuality"); else edit.putString("preferredQuality", profile);
             if (!edit.commit()) throw new IllegalStateException("备份合并未能写入磁盘，请检查可用空间");
             return new LibraryBackup.Result(added, merged, imported, kept, snapshot.skippedLocalEpisodes);

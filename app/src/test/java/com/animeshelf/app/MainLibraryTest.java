@@ -10,7 +10,6 @@ import android.view.ViewGroup;
 import android.widget.EditText;
 import android.widget.SeekBar;
 import androidx.media3.common.util.UnstableApi;
-import androidx.media3.datasource.cache.SimpleCache;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -63,16 +62,9 @@ public class MainLibraryTest {
         AlertDialog dialog = ShadowAlertDialog.getLatestAlertDialog();
         if (dialog != null && dialog.isShowing()) dialog.dismiss();
         if (controller != null) controller.pause().stop().destroy();
-        Field singleton = MediaRepository.class.getDeclaredField("instance");
-        singleton.setAccessible(true);
-        MediaRepository repository = (MediaRepository) singleton.get(null);
-        if (repository != null) {
-            repository.manager.release();
-            Field cache = MediaRepository.class.getDeclaredField("cache");
-            cache.setAccessible(true);
-            ((SimpleCache) cache.get(repository)).release();
-            singleton.set(null, null);
-        }
+        Field singleton = MediaRepository.class.getDeclaredField("instance"); singleton.setAccessible(true);
+        MediaRepository active = (MediaRepository) singleton.get(null);
+        if (active != null) active.releaseForTests();
     }
 
     @Test public void typingFiltersOnlyResultsAndPreservesTheSearchViewFocusAndCursor() throws Exception {

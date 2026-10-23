@@ -13,7 +13,6 @@ import android.widget.TextView;
 import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
-import androidx.media3.datasource.cache.SimpleCache;
 import androidx.media3.exoplayer.ExoPlayer;
 import java.io.File;
 import java.io.IOException;
@@ -81,12 +80,8 @@ public class MainFeatureTest {
         if (dialog != null && dialog.isShowing()) dialog.dismiss();
         if (controller != null) controller.pause().stop().destroy();
         Field singleton = MediaRepository.class.getDeclaredField("instance"); singleton.setAccessible(true);
-        MediaRepository repository = (MediaRepository) singleton.get(null);
-        if (repository != null) {
-            repository.manager.release();
-            Field cache = MediaRepository.class.getDeclaredField("cache"); cache.setAccessible(true);
-            ((SimpleCache) cache.get(repository)).release(); singleton.set(null, null);
-        }
+        MediaRepository active = (MediaRepository) singleton.get(null);
+        if (active != null) active.releaseForTests();
     }
 
     @Test public void backFirstUnlocksThenLeavesFullscreenThenSavesAndReturnsHome() throws Exception {

@@ -320,6 +320,103 @@ public class LibraryBackupTest {
         assertEquals("https://i0.hdslb.com/bfs/bangumi/fetched.jpg", find("ss1").coverUrl);
     }
 
+    @Test public void versionTwoRestoresWifiFilterAndPerSeriesSkipPreferences() throws Exception {
+        store.saveSeries(series("ss1", "片头片尾设置", "ep1"));
+        store.setWifiOnlyDownloads(false); store.setLibraryFilter("unfinished");
+        store.setSkipSettings("ss1", true, 90, 75);
+        String text = store.exportBackup();
+        JSONObject document = new JSONObject(text);
+        assertEquals(2, document.getInt("version"));
+        assertEquals(3, document.getJSONArray("series").getJSONObject(0).getJSONObject("skip").length());
+        LibraryBackup.Snapshot snapshot = store.inspectBackup(text);
+        assertEquals(Boolean.FALSE, snapshot.wifiOnlyDownloads());
+        assertTrue(snapshot.summary().contains("消耗手机流量"));
+        prefs.edit().clear().commit();
+        store.setSkipSettings("unrelated", false, 30, 45);
+
+        store.importBackup(snapshot);
+
+        Store reopened = new Store(context);
+        assertFalse(reopened.isWifiOnlyDownloads()); assertEquals("unfinished", reopened.getLibraryFilter());
+        assertTrue(reopened.getSkipSettings("ss1").enabled);
+        assertEquals(90, reopened.getSkipSettings("ss1").introSeconds);
+        assertEquals(75, reopened.getSkipSettings("ss1").outroSeconds);
+        assertEquals(30, reopened.getSkipSettings("unrelated").introSeconds);
+        assertEquals(45, reopened.getSkipSettings("unrelated").outroSeconds);
+    }
+
+    @Test public void versionOneBackupsPreserveNewerSettingsAlreadyPresentOnThePhone() throws Exception {
+        store.saveSeries(series("ss1", "旧版本片库", "ep1")); store.setThemeId("pink");
+        LibraryBackup.Snapshot snapshot = store.inspectBackup(asVersionOne(store.exportBackup()));
+        assertNull(snapshot.wifiOnlyDownloads());
+        prefs.edit().clear().commit();
+        store.setWifiOnlyDownloads(false); store.setLibraryFilter("offline");
+        store.setSkipSettings("ss1", true, 60, 80);
+
+        store.importBackup(snapshot);
+
+        assertEquals("pink", store.getThemeId()); assertEquals(1, store.listSeries().size());
+        assertFalse(store.isWifiOnlyDownloads()); assertEquals("offline", store.getLibraryFilter());
+        assertTrue(store.getSkipSettings("ss1").enabled);
+        assertEquals(60, store.getSkipSettings("ss1").introSeconds);
+        assertEquals(80, store.getSkipSettings("ss1").outroSeconds);
+    }
+
+    @Test public void versionOneBackupsOnAFreshPhoneUseSafeNewDefaults() throws Exception {
+        store.saveSeries(series("ss1", "旧版本片库", "ep1"));
+        LibraryBackup.Snapshot snapshot = store.inspectBackup(asVersionOne(store.exportBackup()));
+        prefs.edit().clear().commit();
+
+        store.importBackup(snapshot);
+
+        assertTrue(store.isWifiOnlyDownloads()); assertEquals("all", store.getLibraryFilter());
+        assertFalse(store.getSkipSettings("ss1").enabled);
+        assertEquals(0, store.getSkipSettings("ss1").introSeconds);
+        assertEquals(0, store.getSkipSettings("ss1").outroSeconds);
+    }
+
+    @Test public void newBackupSettingsUseStrictVersionedFieldsAndInvalidValuesWriteNothing() throws Exception {
+        store.saveSeries(series("ss1", "原有片库", "ep1"));
+        store.setSkipSettings("ss1", true, 90, 75);
+        String valid = store.exportBackup();
+        List<String> invalid = new ArrayList<>();
+        JSONObject outOfRange = new JSONObject(valid);
+        outOfRange.getJSONArray("series").getJSONObject(0).getJSONObject("skip").put("introSeconds", 601);
+        invalid.add(outOfRange.toString());
+        JSONObject negative = new JSONObject(valid);
+        negative.getJSONArray("series").getJSONObject(0).getJSONObject("skip").put("outroSeconds", -1);
+        invalid.add(negative.toString());
+        JSONObject wrongType = new JSONObject(valid);
+        wrongType.getJSONArray("series").getJSONObject(0).getJSONObject("skip").put("enabled", "true");
+        invalid.add(wrongType.toString());
+        JSONObject extra = new JSONObject(valid);
+        extra.getJSONArray("series").getJSONObject(0).getJSONObject("skip").put("localUri", "content://private");
+        invalid.add(extra.toString());
+        JSONObject missing = new JSONObject(valid); missing.getJSONObject("settings").remove("libraryFilter");
+        invalid.add(missing.toString());
+        JSONObject wifi = new JSONObject(valid); wifi.getJSONObject("settings").put("wifiOnlyDownloads", "false");
+        invalid.add(wifi.toString());
+        JSONObject filter = new JSONObject(valid); filter.getJSONObject("settings").put("libraryFilter", "unknown");
+        invalid.add(filter.toString());
+        invalid.add(new JSONObject(valid).put("version", 1).toString());
+        JSONObject injectedLegacy = new JSONObject(asVersionOne(valid));
+        injectedLegacy.getJSONObject("settings").put("wifiOnlyDownloads", false); invalid.add(injectedLegacy.toString());
+        Map<String, ?> before = new HashMap<>(prefs.getAll());
+        for (String input : invalid) {
+            assertThrows(IllegalArgumentException.class, () -> store.importBackup(store.inspectBackup(input)));
+            assertEquals(before, prefs.getAll());
+        }
+    }
+
+    private static String asVersionOne(String text) throws Exception {
+        JSONObject document = new JSONObject(text).put("version", 1);
+        document.getJSONObject("settings").remove("wifiOnlyDownloads");
+        document.getJSONObject("settings").remove("libraryFilter");
+        JSONArray series = document.getJSONArray("series");
+        for (int i = 0; i < series.length(); i++) series.getJSONObject(i).remove("skip");
+        return document.toString();
+    }
+
     private void progress(String id, long position, long duration, long timestamp, boolean complete) throws Exception {
         prefs.edit().putString("progress:" + id, new JSONObject().put("position", position).put("duration", duration)
             .put("updated", timestamp).put("completed", complete).toString()).commit();

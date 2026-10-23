@@ -1,6 +1,7 @@
 package com.animeshelf.app;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -46,6 +47,11 @@ public final class MediaRepository {
     private final SimpleCache cache;
     private final File storageDirectory;
     private final DefaultDataSource.Factory upstream;
+    private final DownloadNetworkPolicy networkPolicy;
+    private final SharedPreferences policyPreferences;
+    private volatile boolean manuallyPaused;
+    private volatile boolean released;
+    private int appliedPolicyStopReason = Integer.MIN_VALUE;
     private final Map<String, MediaHttpDataSource.Request> routes = new ConcurrentHashMap<>();
     private final DownloadTelemetry telemetry = new DownloadTelemetry();
     private final Handler telemetryHandler = new Handler(Looper.getMainLooper());
@@ -56,7 +62,7 @@ public final class MediaRepository {
         public String key, episodeId, title, qualityLabel, status, errorDetail;
         public Models.Episode episode;
         public Models.Quality quality;
-        public boolean complete, failed, paused, queued, downloading, waitingForNetwork;
+        public boolean complete, failed, paused, queued, downloading, waitingForNetwork, waitingForWifi;
         public DownloadStatus.State state;
         public DownloadStatus.FailureKind failureKind = DownloadStatus.FailureKind.NONE;
         public float percent;
@@ -67,6 +73,10 @@ public final class MediaRepository {
     private MediaRepository(Context context) {
         this.context = context;
         store = new Store(context);
+        policyPreferences = context.getSharedPreferences("anime_download_policy", Context.MODE_PRIVATE);
+        manuallyPaused = policyPreferences.getBoolean("manually_paused", false);
+        networkPolicy = new DownloadNetworkPolicy(context, store::isWifiOnlyDownloads,
+            telemetryHandler, this::applyDownloadNetworkPolicy);
         storageDirectory = context.getFilesDir();
         StandaloneDatabaseProvider database = new StandaloneDatabaseProvider(context);
         cache = new SimpleCache(new File(storageDirectory, "offline-media"), new NoOpCacheEvictor(), database);
@@ -81,20 +91,82 @@ public final class MediaRepository {
         });
         // Login cookies are used only by BiliClient. Never send account cookies to media CDNs.
         upstream = new DefaultDataSource.Factory(context, http);
-        CacheDataSource.Factory data = new CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(upstream);
+        // Playback keeps the ordinary upstream. Only offline downloads receive the final
+        // open/read guard, including tasks restored from the persisted download index.
+        DownloadPolicyDataSource.Factory downloadUpstream = new DownloadPolicyDataSource.Factory(
+            upstream, this::downloadNetworkAllowed, this::scheduleNetworkPolicyApply);
+        CacheDataSource.Factory data = new CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(downloadUpstream);
         manager = new DownloadManager(context, new androidx.media3.exoplayer.offline.DefaultDownloadIndex(database),
             new DefaultDownloaderFactory(data, Executors.newFixedThreadPool(3)));
+        // DownloadService.onCreate() calls resumeDownloads itself. Install persistent stop
+        // reasons before the service can do that, not only after new tasks are enqueued.
+        applyDownloadNetworkPolicy();
         manager.setMaxParallelDownloads(2);
         manager.addListener(new DownloadManager.Listener() {
             @Override public void onDownloadChanged(DownloadManager downloadManager, Download download, Exception finalException) {
+                if (isPolicyBlock(finalException)) {
+                    // A network change can race the final read. Keep the task resumable instead
+                    // of making a deliberate policy stop look like a permanent download failure.
+                    if (isSavedDownloadRequest(download.request.id))
+                        manager.addDownload(download.request, currentPolicyStopReason());
+                    scheduleNetworkPolicyApply();
+                    return;
+                }
                 if (finalException != null) store.saveDownloadError(download.request.id, DownloadStatus.safeFailure(finalException));
                 else if (download.state == Download.STATE_COMPLETED) store.clearDownloadError(download.request.id);
                 sampleTelemetry();
             }
-            @Override public void onInitialized(DownloadManager downloadManager) { sampleTelemetry(); }
+            @Override public void onInitialized(DownloadManager downloadManager) { applyDownloadNetworkPolicy(); sampleTelemetry(); }
             @Override public void onDownloadsPausedChanged(DownloadManager downloadManager, boolean downloadsPaused) { sampleTelemetry(); }
         });
+        networkPolicy.start();
         sampleTelemetry();
+    }
+
+    public DownloadNetworkPolicy.Info downloadNetworkInfo() { return networkPolicy.info(); }
+
+    /** Apply after the Wi-Fi-only preference changes. Network callbacks use the same path. */
+    public void applyDownloadNetworkPolicy() {
+        if (released) return;
+        if (Looper.myLooper() != Looper.getMainLooper()) { scheduleNetworkPolicyApply(); return; }
+        int reason = currentPolicyStopReason();
+        if (appliedPolicyStopReason != reason) {
+            appliedPolicyStopReason = reason;
+            manager.setStopReason(null, reason);
+            telemetry.clear();
+        }
+        // Deliberately never call resumeDownloads here: reconnecting must not undo a user pause.
+    }
+
+    private int currentPolicyStopReason() { return DownloadNetworkPolicy.stopReason(networkPolicy.info(), manuallyPaused); }
+    private boolean downloadNetworkAllowed() { return !manuallyPaused && networkPolicy.info().allowed; }
+    private void scheduleNetworkPolicyApply() {
+        if (!released) telemetryHandler.post(this::applyDownloadNetworkPolicy);
+    }
+
+    /** Dispose singleton resources between isolated Android tests. */
+    synchronized void releaseForTests() {
+        released = true;
+        networkPolicy.close();
+        telemetryHandler.removeCallbacksAndMessages(null);
+        manager.release();
+        cache.release();
+        if (instance == this) instance = null;
+    }
+
+    private static boolean isPolicyBlock(Throwable error) {
+        for (int depth = 0; error != null && depth < 16; depth++, error = error.getCause())
+            if (error instanceof DownloadPolicyDataSource.PolicyBlockedException) return true;
+        return false;
+    }
+
+    private boolean isSavedDownloadRequest(String id) {
+        // A pending read-failure callback must not resurrect a request deleted by the user.
+        for (JSONObject saved : store.savedDownloads()) {
+            String key = saved.optString("key", "");
+            if (!key.isEmpty() && (id.equals(key + ":v") || id.equals(key + ":a"))) return true;
+        }
+        return false;
     }
 
     /** Read the partition that contains this application's offline-media cache. */
@@ -104,6 +176,7 @@ public final class MediaRepository {
     }
 
     private void sampleTelemetry() {
+        if (released) return;
         if (Looper.myLooper() != Looper.getMainLooper()) { telemetryHandler.post(this::sampleTelemetry); return; }
         long now = SystemClock.elapsedRealtime();
         boolean anyActive = false;
@@ -157,6 +230,7 @@ public final class MediaRepository {
         if (q.videoUrl == null || q.videoUrl.isEmpty()) throw new IllegalArgumentException("视频地址为空，请重新解析");
         if (e.localUri != null && !e.localUri.isEmpty()) throw new IllegalArgumentException("本地视频无需下载");
         DownloadStatus.requireStartSpace(availableStorageBytes());
+        applyDownloadNetworkPolicy();
         String key = key(e, q);
         for (OfflineItem old : downloads()) {
             if (old.episodeId.equals(e.id) && old.quality.id.equals(q.id) && !old.key.equals(key) && !old.complete)
@@ -169,15 +243,31 @@ public final class MediaRepository {
         telemetry.forget(key + ":v"); telemetry.forget(key + ":a");
         addTrack(key + ":v", q.videoUrl);
         if (q.audioUrl != null && !q.audioUrl.isEmpty()) addTrack(key + ":a", q.audioUrl);
-        DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true);
+        if (!manuallyPaused) DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true);
     }
     private void addTrack(String id, String url) {
         DownloadRequest request = new DownloadRequest.Builder(id, Uri.parse(url))
             .setMimeType("video/mp4").setCustomCacheKey(id).build();
-        DownloadService.sendAddDownload(context, AnimeDownloadService.class, request, true);
+        DownloadService.sendAddDownload(context, AnimeDownloadService.class, request, currentPolicyStopReason(), true);
     }
-    public void pauseAll() { telemetry.clear(); DownloadService.sendPauseDownloads(context, AnimeDownloadService.class, false); }
-    public void resumeAll() { telemetry.clear(); DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true); }
+    public void pauseAll() {
+        markManuallyPaused(true);
+        DownloadService.sendPauseDownloads(context, AnimeDownloadService.class, false);
+    }
+    public void resumeAll() {
+        markManuallyPaused(false);
+        DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true);
+    }
+    void pauseForServiceTimeout() {
+        markManuallyPaused(true);
+        manager.pauseDownloads();
+    }
+    private void markManuallyPaused(boolean paused) {
+        manuallyPaused = paused;
+        policyPreferences.edit().putBoolean("manually_paused", paused).apply();
+        telemetry.clear();
+        applyDownloadNetworkPolicy();
+    }
     public void remove(OfflineItem item) {
         DownloadService.sendRemoveDownload(context, AnimeDownloadService.class, item.key + ":v", true);
         if (hasAudio(item.quality)) DownloadService.sendRemoveDownload(context, AnimeDownloadService.class, item.key + ":a", true);
@@ -192,6 +282,7 @@ public final class MediaRepository {
     public List<OfflineItem> downloads() {
         ArrayList<OfflineItem> items = new ArrayList<>();
         long availableBytes = availableStorageBytes();
+        DownloadNetworkPolicy.Info network = networkPolicy.info();
         for (JSONObject saved : store.savedDownloads()) {
             try {
                 OfflineItem item = new OfflineItem();
@@ -204,8 +295,14 @@ public final class MediaRepository {
                 Download video = track(item.key + ":v"), audio = hasAudio(item.quality) ? track(item.key + ":a") : null;
                 boolean audioNeeded = hasAudio(item.quality);
                 DownloadStatus.Snapshot snapshot = DownloadStatus.summarize(video, audio, audioNeeded,
-                    manager.getDownloadsPaused(), manager.getNotMetRequirements());
+                    manuallyPaused || manager.getDownloadsPaused(), manager.getNotMetRequirements());
                 item.state = snapshot.state;
+                if (!manuallyPaused && network.wifiOnly && !network.allowed
+                    && item.state != DownloadStatus.State.COMPLETED && item.state != DownloadStatus.State.FAILED
+                    && item.state != DownloadStatus.State.REMOVING) {
+                    item.state = DownloadStatus.State.WAITING_NETWORK;
+                    item.waitingForWifi = true;
+                }
                 item.complete = item.state == DownloadStatus.State.COMPLETED;
                 item.failed = item.state == DownloadStatus.State.FAILED;
                 item.paused = item.state == DownloadStatus.State.PAUSED;
@@ -224,6 +321,7 @@ public final class MediaRepository {
                 item.estimatedRemainingSeconds = item.complete ? 0 : item.downloading
                     ? DownloadTelemetry.remainingSeconds(item.totalBytes, item.bytesDownloaded, item.bytesPerSecond) : -1;
                 item.status = DownloadStatus.label(item.state);
+                if (item.waitingForWifi) item.status = "等待 Wi-Fi · 自动继续下载";
                 if (item.failed) item.status += " · " + DownloadStatus.failureSummary(item.failureKind);
                 items.add(item);
             } catch (Exception ignored) { }

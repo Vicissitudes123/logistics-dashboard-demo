@@ -36,6 +36,8 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.HorizontalScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -114,6 +116,7 @@ public final class MainActivity extends Activity {
     private EditText librarySearch;
     private LinearLayout libraryResults;
     private String libraryQuery = "";
+    private LinearLayout libraryFilters;
     private CoverLoader coverLoader;
     private final Set<String> coverLookups = new LinkedHashSet<>();
     private final java.util.Map<String, ImageView> libraryCovers = new LinkedHashMap<>();
@@ -127,6 +130,22 @@ public final class MainActivity extends Activity {
     private int playbackNavigationToken;
     interface QualityResolver { List<Models.Quality> load(Models.Episode episode, String cookie) throws Exception; }
     private QualityResolver qualityResolver = (episode, cookie) -> new BiliClient(cookie).qualities(episode);
+    interface UpdateResolver { UpdateChecker.Release check(int currentCode, int sdk) throws Exception; }
+    private UpdateResolver updateResolver = UpdateChecker::check;
+    private boolean updateChecking;
+    private final SkipPlaybackPolicy skipPolicy = new SkipPlaybackPolicy();
+    private LinearLayout skipNotice;
+    private TextView skipNoticeText;
+    private Button skipNoticeAction;
+    private boolean skipNoticeIsIntro;
+    private long skippedIntroFrom, skipNoticeUntil;
+    private boolean skipDialogOpen;
+    private final Runnable skipTicker = new Runnable() {
+        @Override public void run() {
+            if (dead || !resumed || player == null) return;
+            updateSkipPlayback(); handler.postDelayed(this, 500);
+        }
+    };
 
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
@@ -224,6 +243,7 @@ public final class MainActivity extends Activity {
             @Override public void togglePlayback() { MainActivity.this.togglePlayback(); }
             @Override public void seekTo(long position) {
                 if (!canSeek()) return;
+                skipPolicy.onManualSeek(); hideSkipNotice();
                 player.seekTo(Math.max(0, Math.min(player.getDuration(), position)));
                 savePosition();
             }
@@ -236,6 +256,13 @@ public final class MainActivity extends Activity {
             @Override public void toggleFullScreen() { setFullScreen(!fullScreen); }
         });
         videoFrame.addView(playerOverlay, new FrameLayout.LayoutParams(-1, -1));
+        skipNotice = row(); skipNotice.setPadding(dp(12), dp(4), dp(4), dp(4));
+        skipNotice.setBackground(background(0xDD191D2C, 12)); skipNotice.setVisibility(View.GONE);
+        skipNoticeText = text("", 13, TEXT); skipNotice.addView(skipNoticeText);
+        skipNoticeAction = button("本集不跳过", false, v -> cancelEpisodeSkip());
+        skipNoticeAction.setContentDescription("取消本集自动跳过"); skipNotice.addView(skipNoticeAction);
+        FrameLayout.LayoutParams skipParams = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        skipParams.topMargin = dp(72); videoFrame.addView(skipNotice, skipParams);
         playerPanel.addView(videoFrame, new LinearLayout.LayoutParams(-1, dp(220)));
         root.addView(playerPanel);
 
@@ -301,6 +328,11 @@ public final class MainActivity extends Activity {
         searchRow.addView(librarySearch, new LinearLayout.LayoutParams(0, dp(52), 1));
         searchRow.addView(button("清空", false, v -> librarySearch.setText("")));
         content.addView(searchRow, gapLayout());
+        HorizontalScrollView filters = new HorizontalScrollView(this);
+        filters.setHorizontalScrollBarEnabled(false);
+        libraryFilters = row(); filters.addView(libraryFilters);
+        content.addView(filters, gapLayout());
+        renderLibraryFilters();
         libraryResults = column(); content.addView(libraryResults);
         librarySearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
@@ -323,7 +355,18 @@ public final class MainActivity extends Activity {
         libraryResults.removeAllViews();
         libraryCovers.clear(); libraryCoverSeries.clear(); loadedCovers.clear();
         List<Models.Series> visible = store.listVisibleSeries();
-        LibraryCatalogue.Sections sections = LibraryCatalogue.build(visible, libraryQuery,
+        List<Models.Series> eligible = new ArrayList<>();
+        String filter = store.getLibraryFilter();
+        Set<String> offlineSeries = new LinkedHashSet<>();
+        if ("offline".equals(filter)) for (MediaRepository.OfflineItem item : media.downloads())
+            if (item.complete && item.episode != null) offlineSeries.add(item.episode.seriesId);
+        for (Models.Series entry : visible) {
+            if ("unfinished".equals(filter) && store.isSeriesWatched(entry)) continue;
+            if ("watched".equals(filter) && !store.isSeriesWatched(entry)) continue;
+            if ("offline".equals(filter) && !offlineSeries.contains(entry.id)) continue;
+            eligible.add(entry);
+        }
+        LibraryCatalogue.Sections sections = LibraryCatalogue.build(eligible, libraryQuery,
             store.getRecentVisibleSeriesId(), store::isPinned);
         TextView heading = text("我的番剧", 21, TEXT); heading.setTypeface(null, Typeface.BOLD);
         heading.setPadding(0, dp(5), 0, dp(5)); libraryResults.addView(heading);
@@ -332,10 +375,13 @@ public final class MainActivity extends Activity {
         if (sections.total == 0) {
             LinearLayout box = card();
             box.addView(text(visible.isEmpty() ? "还没有显示在首页的番剧" : "没有找到匹配的番剧", 17, TEXT));
-            TextView note = text(visible.isEmpty() ? "添加新的番剧，或到设置恢复已移除的番剧。" : "试试片名中的几个字，例如「高木」。", 13, MUTED);
+            TextView note = text(visible.isEmpty() ? "添加新的番剧，或到设置恢复已移除的番剧。"
+                : "all".equals(filter) ? "试试片名中的几个字，例如「高木」。" : "当前筛选下没有匹配内容。可切换到全部，或清空搜索。", 13, MUTED);
             note.setPadding(0, dp(10), 0, dp(12)); box.addView(note);
-            box.addView(button(visible.isEmpty() ? "添加番剧" : "清空搜索", true,
-                v -> { if (visible.isEmpty()) addMenu(); else librarySearch.setText(""); }));
+            box.addView(button(visible.isEmpty() ? "添加番剧" : "显示全部番剧", true,
+                v -> { if (visible.isEmpty()) addMenu(); else {
+                    store.setLibraryFilter("all"); renderLibraryFilters(); librarySearch.setText(""); renderLibraryResults();
+                } }));
             libraryResults.addView(box, gapLayout()); return;
         }
         if (sections.recent != null) {
@@ -348,6 +394,22 @@ public final class MainActivity extends Activity {
             librarySection("其他番剧"); for (Models.Series series : sections.others) addLibraryCard(series);
         }
         libraryResults.post(this::loadVisibleLibraryCovers);
+    }
+
+    private void renderLibraryFilters() {
+        if (libraryFilters == null) return;
+        libraryFilters.removeAllViews();
+        String[] values = {"all", "unfinished", "watched", "offline"};
+        String[] labels = {"全部", "未看完", "已看完", "有离线"};
+        for (int i = 0; i < values.length; i++) {
+            final String value = values[i];
+            boolean active = value.equals(store.getLibraryFilter());
+            Button choice = button(labels[i], active, v -> {
+                store.setLibraryFilter(value); renderLibraryFilters(); renderLibraryResults();
+            });
+            choice.setContentDescription("首页筛选" + labels[i]); choice.setSelected(active);
+            libraryFilters.addView(choice);
+        }
     }
 
     private void librarySection(String label) {
@@ -488,6 +550,9 @@ public final class MainActivity extends Activity {
         });
         settingRow("记住画质偏好", (store.isRememberQuality() ? "已开启" : "已关闭") + " · " + preferredQualityText()
             + "\n下一集优先同清晰度与编码，缺少时提示选择。", "画质偏好设置", this::chooseQualityPreference);
+        settingRow("仅 Wi-Fi 下载", (store.isWifiOnlyDownloads() ? "已开启 · 切到移动网络后等待 Wi-Fi" : "已关闭 · 允许使用移动数据下载")
+            + "\n" + media.downloadNetworkInfo().summary, "仅Wi-Fi下载设置", this::chooseDownloadNetwork);
+        settingRow("检查更新", "当前版本 " + installedVersionName() + " · 查看新版说明与安装包", "检查更新", this::checkForUpdates);
         settingRow("导出片库备份", "保存番剧、观看进度、置顶和设置；不含账号与视频文件。", "导出片库备份", this::exportBackupMenu);
         settingRow("从备份恢复", "合并片库并保留本机较新进度；导入前可查看摘要。", "从备份恢复", this::importBackupMenu);
         settingRow("已移除番剧", store.listHiddenSeries().size() + " 部 · 点击恢复到首页", "已移除番剧", this::restoreHiddenSeriesMenu);
@@ -500,10 +565,7 @@ public final class MainActivity extends Activity {
         settingRow("离线视频", "已完成 " + complete + " 份 / 共 " + items.size() + " 个任务 · 约 "
             + android.text.format.Formatter.formatShortFileSize(this, bytes) + "\n点击查看与管理；卸载或清除应用数据会删除下载。", "管理离线视频", this::openDownloads);
         settingRow("重置外观和播放设置", "恢复默认蓝色、1.0× 常用倍速、2.0× 长按加速及 3.5 秒自动隐藏", "重置设置", this::confirmResetSettings);
-        String version = "";
-        try { version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
-        catch (PackageManager.NameNotFoundException ignored) { }
-        TextView note = text("番匣 " + version + "\n设置仅保存在本机。重置设置不会清除番剧、置顶、下载、观看记录或登录状态。", 12, MUTED);
+        TextView note = text("番匣 " + installedVersionName() + "\n设置仅保存在本机。重置设置不会清除番剧、置顶、下载、观看记录或登录状态。", 12, MUTED);
         note.setPadding(dp(6), dp(8), dp(6), dp(16)); content.addView(note);
     }
 
@@ -516,6 +578,74 @@ public final class MainActivity extends Activity {
         TextView subtitle = text(detail, 13, MUTED); subtitle.setPadding(0, dp(7), 0, dp(3));
         box.addView(subtitle); box.setOnClickListener(v -> action.run());
         content.addView(box, gapLayout());
+    }
+
+    private String installedVersionName() {
+        try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
+        catch (PackageManager.NameNotFoundException ignored) { return "未知"; }
+    }
+
+    private void chooseDownloadNetwork() {
+        if (!store.isWifiOnlyDownloads()) {
+            store.setWifiOnlyDownloads(true); media.applyDownloadNetworkPolicy(); renderSettings(); return;
+        }
+        new AlertDialog.Builder(this).setTitle("允许使用移动数据下载？")
+            .setMessage("高清视频可能消耗大量流量。关闭后，当前队列和后续下载都可使用移动数据，可能产生运营商费用。\n\n此设置只限制视频下载，在线播放与读取剧集信息仍会使用当前网络。")
+            .setNegativeButton("保持仅 Wi-Fi", null).setPositiveButton("允许移动数据", (dialog, which) -> {
+                store.setWifiOnlyDownloads(false); media.applyDownloadNetworkPolicy(); renderSettings();
+            }).show();
+    }
+
+    private void checkForUpdates() {
+        if (updateChecking) { notice("正在检查更新，请稍候"); return; }
+        final int token = selectionToken;
+        final int updateStatusToken = ++taskStatusToken;
+        int code;
+        try { code = getPackageManager().getPackageInfo(getPackageName(), 0).versionCode; }
+        catch (PackageManager.NameNotFoundException ignored) { error("检查更新失败", "无法读取当前应用版本"); return; }
+        final int currentCode = code;
+        updateChecking = true;
+        status.setText("正在检查更新…"); status.setVisibility(View.VISIBLE);
+        io.execute(() -> {
+            try {
+                UpdateChecker.Release release = updateResolver.check(currentCode, Build.VERSION.SDK_INT);
+                handler.post(() -> {
+                    updateChecking = false;
+                    if (!dead && updateStatusToken == taskStatusToken) status.setVisibility(View.GONE);
+                    if (dead || isFinishing() || !settingsPage || token != selectionToken) return;
+                    showUpdateRelease(release);
+                });
+            } catch (Exception failure) {
+                handler.post(() -> {
+                    updateChecking = false;
+                    if (!dead && updateStatusToken == taskStatusToken) status.setVisibility(View.GONE);
+                    if (dead || isFinishing() || !settingsPage || token != selectionToken) return;
+                    error("检查更新失败", failure instanceof UpdateChecker.UpdateException ? failure.getMessage()
+                        : "暂时无法读取更新信息，请检查网络后重试。当前版本仍可继续使用。");
+                });
+            }
+        });
+    }
+
+    private void showUpdateRelease(UpdateChecker.Release release) {
+        if (!release.isNewer) { error("检查更新", "当前版本 " + installedVersionName() + " 暂无可用更新。"); return; }
+        StringBuilder details = new StringBuilder("当前 ").append(installedVersionName())
+            .append(" → 新版 ").append(release.versionName).append("\n");
+        for (String note : release.notes) details.append("\n• ").append(note);
+        if (!release.isCompatible) {
+            details.append("\n\n此版本需要 Android API ").append(release.minSdk).append(" 或更高版本，当前系统暂不支持。");
+            error("发现新版本", details.toString()); return;
+        }
+        details.append("\n\n安装包约 ").append(android.text.format.Formatter.formatShortFileSize(this, release.apkBytes))
+            .append("。点击后由浏览器下载，再由你确认安装。覆盖安装可保留数据。若 APK 下载卡住，可选择 ZIP，解压后安装。");
+        new AlertDialog.Builder(this).setTitle("发现新版 " + release.versionName).setMessage(details.toString())
+            .setNegativeButton("稍后", null).setPositiveButton("下载 APK", (d, w) -> openUpdateDownload(release.apkUrl))
+            .setNeutralButton("下载 ZIP", (d, w) -> openUpdateDownload(release.zipUrl)).show();
+    }
+
+    private void openUpdateDownload(String url) {
+        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
+        catch (Exception unavailable) { error("无法打开下载链接", "没有可处理此链接的浏览器，请安装或启用浏览器后重试。"); }
     }
 
     private void chooseTheme() {
@@ -577,7 +707,7 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("恢复默认外观和播放设置？")
             .setMessage("不会清除番剧、置顶、下载、观看记录或登录状态。")
             .setNegativeButton("取消", null).setPositiveButton("恢复默认", (dialog, which) -> {
-                store.resetAppearanceAndPlaybackSettings(); applyTheme(); renderSettings();
+                store.resetAppearanceAndPlaybackSettings(); media.applyDownloadNetworkPolicy(); applyTheme(); renderSettings();
             }).show();
     }
 
@@ -671,7 +801,7 @@ public final class MainActivity extends Activity {
                     catch (IllegalArgumentException | IllegalStateException failure) { throw new BackupMessage(failure.getMessage()); }
                     finally { backupBusy = false; }
                 }, result -> {
-                    applyTheme(); renderSettings();
+                    media.applyDownloadNetworkPolicy(); applyTheme(); renderSettings();
                     error("恢复完成", result.summary());
                 });
             }).show();
@@ -692,6 +822,8 @@ public final class MainActivity extends Activity {
         settingsPage = false; downloadsPage = false; seriesPage = true; currentSeries = series; content.removeAllViews();
         content.addView(button("‹  回到首页", false, v -> renderLibrary()));
         title(series.title, series.episodes.size() + " 集  ·  点击播放，长按多选下载");
+        Button skipSettings = button("片头片尾 · " + skipSettingsText(series.id), false, v -> showSkipSettings(series));
+        skipSettings.setContentDescription("剧集片头片尾设置"); content.addView(skipSettings, gapLayout());
         boolean hasOnlineEpisodes = false;
         for (Models.Episode item : series.episodes) if (item.localUri == null || item.localUri.isEmpty()) hasOnlineEpisodes = true;
         if (episodeSelectionMode) addEpisodeSelectionActions(series);
@@ -891,6 +1023,8 @@ public final class MainActivity extends Activity {
     }
 
     private void play(Models.Episode episode, Models.Quality quality, boolean offline, long resumeOverrideMs) {
+        boolean keepSkipDisabled = resumeOverrideMs >= 0 && currentEpisode != null
+            && currentEpisode.id.equals(episode.id) && skipPolicy.isDisabledForSession();
         clearListSelection();
         autoNextQueued = false;
         ++selectionToken; playerOverlay.setActive(false); savePosition(); sourceReady = false;
@@ -900,6 +1034,8 @@ public final class MainActivity extends Activity {
         long resume = resumeOverrideMs >= 0 ? resumeOverrideMs : progress.positionMs;
         if (resumeOverrideMs < 0 && progress.durationMs > 0 && resume >= progress.durationMs - 2000) resume = 0;
         requestedResumeMs = Math.max(0, resume);
+        startSkipSession(episode.seriesId, requestedResumeMs);
+        if (keepSkipDisabled) skipPolicy.disableForSession();
         Models.Series found = findSeries(episode.seriesId);
         currentSeries = found;
         try {
@@ -946,6 +1082,7 @@ public final class MainActivity extends Activity {
                 title("正在播放", "点击上方「首页」可保存进度并返回番剧库");
             }
             playbackNavigationToken = selectionToken;
+            handler.removeCallbacks(skipTicker); handler.post(skipTicker);
         } catch (Exception e) { showPlaybackFailure(e); }
     }
 
@@ -1056,6 +1193,7 @@ public final class MainActivity extends Activity {
 
     private void closePlayback() {
         autoNextQueued = false;
+        handler.removeCallbacks(skipTicker); skipPolicy.reset(); hideSkipNotice();
         restoreWindowBrightness();
         cancelBatchDownloads();
         ++selectionToken;
@@ -1185,16 +1323,124 @@ public final class MainActivity extends Activity {
     }
 
     private void chooseDisplayMenu() {
-        new AlertDialog.Builder(this).setTitle("画面显示")
-            .setItems(new String[]{"适应画面", "铺满画面（裁切边缘）", "缩小 −", "放大 ＋", "恢复 100%", "视频信息 / HDR"}, (dialog, index) -> {
+        new AlertDialog.Builder(this).setTitle("画面与播放")
+            .setItems(new String[]{"适应画面", "铺满画面（裁切边缘）", "缩小 −", "放大 ＋", "恢复 100%", "视频信息 / HDR",
+                "本番片头片尾设置", skipPolicy.isDisabledForSession() ? "本集已取消自动跳过" : "本集不自动跳过"}, (dialog, index) -> {
                 if (index == 0 || index == 1) {
                     zoom = 1; applyZoom();
                     playerView.setResizeMode(index == 0 ? AspectRatioFrameLayout.RESIZE_MODE_FIT : AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
                 } else if (index == 2) setZoom(zoom - .25f);
                 else if (index == 3) setZoom(zoom + .25f);
                 else if (index == 4) setZoom(1);
-                else showVideoInformation();
+                else if (index == 5) showVideoInformation();
+                else if (index == 6 && currentEpisode != null) {
+                    Models.Series series = findSeries(currentEpisode.seriesId);
+                    if (series != null) showSkipSettings(series);
+                } else if (index == 7) { skipPolicy.disableForSession(); hideSkipNotice(); notice("本集不再自动跳过，下次播放仍使用本番设置"); }
             }).setNegativeButton("关闭", null).show();
+    }
+
+    private String skipSettingsText(String seriesId) {
+        Store.SkipSettings settings = store.getSkipSettings(seriesId);
+        return settings.enabled ? "片头 " + settings.introSeconds + " 秒 / 片尾 " + settings.outroSeconds + " 秒" : "未开启";
+    }
+
+    private void showSkipSettings(Models.Series series) {
+        Store.SkipSettings settings = store.getSkipSettings(series.id);
+        LinearLayout form = column(); form.setPadding(dp(20), dp(8), dp(20), dp(8));
+        Switch enabled = new Switch(this); enabled.setText("自动跳过这部番剧的片头片尾");
+        enabled.setTextColor(TEXT); enabled.setTextSize(15); enabled.setChecked(settings.enabled);
+        enabled.setContentDescription("启用本番自动跳过"); form.addView(enabled);
+        form.addView(text("分别填写秒数，0 表示不跳过该部分（最多 600 秒）。", 12, MUTED));
+        EditText intro = skipSecondsInput("片头秒数", settings.introSeconds);
+        EditText outro = skipSecondsInput("片尾秒数", settings.outroSeconds);
+        form.addView(text("片头秒数", 14, TEXT)); form.addView(intro);
+        form.addView(text("片尾秒数", 14, TEXT)); form.addView(outro);
+        TextView help = text("只按填写的时长跳过，不会识别片头或彩蛋。片尾先倒计时 5 秒，可取消；拖动进度或选择「本集不自动跳过」后，本次播放不再自动跳过。", 12, MUTED);
+        help.setPadding(0, dp(12), 0, 0); form.addView(help);
+        ScrollView wrapper = new ScrollView(this); wrapper.addView(form);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("片头片尾 · " + series.title).setView(wrapper)
+            .setNegativeButton("取消", null).setPositiveButton("保存", null).create();
+        skipDialogOpen = true;
+        dialog.setOnDismissListener(d -> skipDialogOpen = false);
+        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            Integer introSeconds = readSkipSeconds(intro), outroSeconds = readSkipSeconds(outro);
+            if (introSeconds == null || outroSeconds == null) return;
+            store.setSkipSettings(series.id, enabled.isChecked(), introSeconds, outroSeconds);
+            if (player != null && currentEpisode != null && series.id.equals(currentEpisode.seriesId))
+                startSkipSession(series.id, Math.max(0, player.getCurrentPosition()));
+            dialog.dismiss();
+            if (seriesPage && currentSeries != null && series.id.equals(currentSeries.id)) {
+                boolean navigationWasCurrent = selectionToken == playbackNavigationToken;
+                int y = scroll.getScrollY(); renderSeriesContent(series); scroll.scrollTo(0, y);
+                if (player != null && navigationWasCurrent) playbackNavigationToken = selectionToken;
+            }
+            notice("已保存这部番剧的片头片尾设置");
+        }));
+        dialog.show();
+    }
+
+    private EditText skipSecondsInput(String description, int seconds) {
+        EditText field = new EditText(this); field.setSingleLine(true);
+        field.setInputType(android.text.InputType.TYPE_CLASS_NUMBER); field.setTextColor(TEXT);
+        field.setText(String.valueOf(seconds)); field.setContentDescription(description); return field;
+    }
+
+    private Integer readSkipSeconds(EditText field) {
+        try {
+            String value = field.getText().toString().trim();
+            int seconds = value.isEmpty() ? 0 : Integer.parseInt(value);
+            if (seconds >= 0 && seconds <= 600) return seconds;
+        } catch (NumberFormatException ignored) { }
+        field.setError("请输入 0～600 之间的秒数"); return null;
+    }
+
+    private void startSkipSession(String seriesId, long initialPosition) {
+        Store.SkipSettings settings = store.getSkipSettings(seriesId);
+        skipPolicy.startSession(settings.enabled, settings.introSeconds, settings.outroSeconds, initialPosition);
+        hideSkipNotice();
+    }
+
+    private void updateSkipPlayback() {
+        if (player == null || !resumed) { hideSkipNotice(); return; }
+        long now = android.os.SystemClock.elapsedRealtime();
+        boolean ready = sourceReady && player.getPlaybackState() == Player.STATE_READY && !skipDialogOpen
+            && !playerOverlay.isLocked() && selectionToken == playbackNavigationToken;
+        SkipPlaybackPolicy.Decision decision = skipPolicy.update(player.getCurrentPosition(), player.getDuration(),
+            ready, player.isCurrentMediaItemSeekable(), player.isPlaying(), now);
+        if (!ready) {
+            if (!skipNoticeIsIntro || now >= skipNoticeUntil || skipDialogOpen || playerOverlay.isLocked()) hideSkipNotice();
+            return;
+        }
+        switch (decision.action) {
+            case SKIP_INTRO:
+                skippedIntroFrom = player.getCurrentPosition(); player.seekTo(decision.targetMs);
+                skipNoticeIsIntro = true; skipNoticeUntil = now + 5000;
+                skipNoticeText.setText("已跳过片头"); skipNoticeAction.setText("撤销");
+                skipNotice.setVisibility(View.VISIBLE); break;
+            case COUNTDOWN_OUTRO:
+                skipNoticeIsIntro = false; skipNoticeUntil = 0;
+                skipNoticeText.setText(decision.countdownSeconds + " 秒后跳过片尾"); skipNoticeAction.setText("本集不跳过");
+                skipNotice.setVisibility(View.VISIBLE); break;
+            case SKIP_OUTRO:
+                hideSkipNotice(); player.seekTo(decision.targetMs); savePosition(); break;
+            case NONE:
+                if (!skipNoticeIsIntro || now >= skipNoticeUntil || !player.isPlaying()) hideSkipNotice();
+                break;
+        }
+    }
+
+    private void hideSkipNotice() {
+        if (skipNotice != null) skipNotice.setVisibility(View.GONE);
+        skipNoticeIsIntro = false; skipNoticeUntil = 0;
+    }
+
+    private void cancelEpisodeSkip() {
+        if (playerOverlay.isLocked()) { hideSkipNotice(); return; }
+        boolean undoIntro = skipNoticeIsIntro;
+        skipPolicy.disableForSession(); hideSkipNotice();
+        if (undoIntro && player != null) { player.seekTo(skippedIntroFrom); savePosition(); }
+        notice("本集不再自动跳过");
     }
 
     private void showVideoInformation() {
@@ -1401,6 +1647,7 @@ public final class MainActivity extends Activity {
         String summary = "设备可用空间 " + (available < 0 ? "暂不可读" : android.text.format.Formatter.formatShortFileSize(this, available));
         if (!entries.isEmpty()) summary += "\n下载中 " + active + " · 等待 " + waiting + " · 失败 " + failed;
         if (measured) summary += " · " + android.text.format.Formatter.formatShortFileSize(this, speed) + "/s";
+        summary += "\n" + media.downloadNetworkInfo().summary + (store.isWifiOnlyDownloads() ? "" : " · 已允许移动数据下载");
         if (available >= 0 && available < 200L * 1024 * 1024) summary += "\n可用空间较少，可删除不再需要的离线视频。";
         TextView detail = text(summary, 12, MUTED); detail.setPadding(dp(4), 0, dp(4), dp(14));
         detail.setContentDescription("下载状态摘要"); content.addView(detail);
@@ -1770,6 +2017,7 @@ public final class MainActivity extends Activity {
         applyPlaybackBrightness();
         applySystemBars();
         if (playerOverlay != null && player != null) playerOverlay.setActive(true);
+        handler.removeCallbacks(skipTicker); if (player != null) handler.post(skipTicker);
     }
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
@@ -1779,6 +2027,9 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() {
         resumeNavigation = player != null && selectionToken == playbackNavigationToken;
         resumed = false; autoNextQueued = false; ++selectionToken;
+        handler.removeCallbacks(skipTicker); hideSkipNotice();
+        if (player != null) skipPolicy.update(player.getCurrentPosition(), player.getDuration(), false, false, false,
+            android.os.SystemClock.elapsedRealtime());
         cancelBatchDownloads();
         if (playerOverlay != null) playerOverlay.setActive(false);
         restoreWindowBrightness();

@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 env:
-  EXPECTED_APK_VERSION: '0.1.7'
-  EXPECTED_APK_VERSION_CODE: '8'
+  EXPECTED_APK_VERSION: '0.1.8'
+  EXPECTED_APK_VERSION_CODE: '9'
   EXPECTED_APK_CERTIFICATE_SHA256: '0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c'
 
 jobs:
@@ -123,7 +123,7 @@ jobs:
           if-no-files-found: error
 
   deliver:
-    name: Publish verified APK and installation ZIP
+    name: Publish verified APK, installation ZIP and update manifest
     needs: build
     if: github.ref == 'refs/heads/anime-shelf-apk'
     runs-on: ubuntu-latest
@@ -167,7 +167,7 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs verified-build/outputs/apk/debug/app-debug.apk > verified-build/apk-signature-checked.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging verified-build/outputs/apk/debug/app-debug.apk > verified-build/apk-info-checked.txt
           python3 - <<'PY'
-          import hashlib, os, pathlib, re, zipfile
+          import hashlib, json, os, pathlib, re, zipfile
           folder = pathlib.Path('verified-build')
           apk = folder / 'outputs/apk/debug/app-debug.apk'
           payload = apk.read_bytes()
@@ -185,6 +185,7 @@ jobs:
           package = required(r"package: name='([^']+)'", info)
           version = required(r"versionName='([^']+)'", info)
           code = required(r"versionCode='([^']+)'", info)
+          min_sdk = int(required(r"sdkVersion:'(\d+)'", info))
           certificate = required(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)', signature).lower()
           signer_count = required(r'Number of signers: (\d+)', signature)
           if (signer_count != '1' or package != 'com.animeshelf.app'
@@ -193,6 +194,9 @@ jobs:
                   or certificate != os.environ['EXPECTED_APK_CERTIFICATE_SHA256']
                   or certificate != os.environ['BUILD_APK_CERTIFICATE_SHA256']):
               raise SystemExit('Downloaded APK identity or certificate does not match the verified build')
+          source_commit = os.environ['BUILD_SOURCE_SHA']
+          if not re.fullmatch(r'[0-9a-f]{40}', source_commit) or not 26 <= min_sdk <= 1000:
+              raise SystemExit('Invalid source commit or minimum Android SDK')
           target = pathlib.Path('downloads') / f'anime-shelf-{version}.apk'
           target.parent.mkdir(exist_ok=True)
           target.write_bytes(payload)
@@ -215,32 +219,63 @@ jobs:
                   raise SystemExit('APK bytes changed inside the installation ZIP')
           archive_digest = hashlib.sha256(archive_target.read_bytes()).hexdigest()
           archive_target.with_suffix('.zip.sha256').write_text(f'{archive_digest}  {archive_target.name}\n')
+          base_url = 'https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/'
+          manifest = {
+              'schemaVersion': 1,
+              'versionCode': int(code),
+              'versionName': version,
+              'packageName': package,
+              'minSdk': min_sdk,
+              'apkUrl': base_url + target.name,
+              'zipUrl': base_url + archive_target.name,
+              'apkSha256': digest,
+              'zipSha256': archive_digest,
+              'apkBytes': len(payload),
+              'zipBytes': archive_target.stat().st_size,
+              'notes': [
+                  '新增应用内手动检查更新。',
+                  '仅 Wi-Fi 下载默认开启，允许移动网络下载前会再次确认。',
+                  '每部番剧可分别设置跳过片头片尾，默认关闭，本集可暂时取消。',
+                  '首页新增全部、未看完、已看完、有离线视频筛选，可结合搜索。',
+              ],
+              'sourceCommit': source_commit,
+          }
+          manifest_path = target.parent / 'latest.json'
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          if json.loads(manifest_path.read_text(encoding='utf-8')) != manifest:
+              raise SystemExit('Written update manifest does not match verified release data')
+          manifest_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'zip_sha256={archive_digest}\n')
               output.write(f'zip_size={archive_target.stat().st_size}\n')
+              output.write(f'manifest_sha256={manifest_digest}\n')
           print(f'Verified {target}: {size} bytes, SHA-256 {digest}, certificate {certificate}')
           print(f'Verified {archive_target}: {archive_target.stat().st_size} bytes, SHA-256 {archive_digest}')
+          print(f'Verified {manifest_path}: schema 1, version {version}, source {source_commit}, SHA-256 {manifest_digest}')
           PY
-      - name: Commit only the verified APK, ZIP and their checksums
+      - name: Commit only the verified APK, ZIP, checksums and update manifest
         shell: bash
         run: |
           git merge-base --is-ancestor "$BUILD_SOURCE_SHA" HEAD
           git diff --exit-code "$BUILD_SOURCE_SHA" HEAD -- . ':(exclude)downloads/**'
-          git add -- "downloads/anime-shelf-${BUILD_APK_VERSION}.apk" "downloads/anime-shelf-${BUILD_APK_VERSION}.apk.sha256" "downloads/anime-shelf-${BUILD_APK_VERSION}-install.zip" "downloads/anime-shelf-${BUILD_APK_VERSION}-install.zip.sha256"
+          git add -- "downloads/anime-shelf-${BUILD_APK_VERSION}.apk" "downloads/anime-shelf-${BUILD_APK_VERSION}.apk.sha256" "downloads/anime-shelf-${BUILD_APK_VERSION}-install.zip" "downloads/anime-shelf-${BUILD_APK_VERSION}-install.zip.sha256" downloads/latest.json
           if git diff --cached --quiet; then
-            echo 'The verified APK and ZIP downloads are already current.'
+            echo 'The verified APK, ZIP and update manifest are already current.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m "Publish verified Anime Shelf ${BUILD_APK_VERSION} APK and ZIP [skip ci]"
+          git commit -m "Publish verified Anime Shelf ${BUILD_APK_VERSION} APK, ZIP and update manifest [skip ci]"
           git push origin HEAD:anime-shelf-apk
-      - name: Report APK and ZIP downloads
+      - name: Report APK, ZIP and update manifest downloads
         shell: bash
         env:
           ZIP_SHA256: ${{ steps.delivery_files.outputs.zip_sha256 }}
+          MANIFEST_SHA256: ${{ steps.delivery_files.outputs.manifest_sha256 }}
         run: |
           echo "ZIP: https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-${BUILD_APK_VERSION}-install.zip" >> "$GITHUB_STEP_SUMMARY"
           echo "ZIP SHA-256: $ZIP_SHA256" >> "$GITHUB_STEP_SUMMARY"
           echo "APK: https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-${BUILD_APK_VERSION}.apk" >> "$GITHUB_STEP_SUMMARY"
           echo "APK SHA-256: $BUILD_APK_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Update manifest: https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/latest.json' >> "$GITHUB_STEP_SUMMARY"
+          echo "Update manifest SHA-256: $MANIFEST_SHA256" >> "$GITHUB_STEP_SUMMARY"
