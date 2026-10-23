@@ -11,14 +11,33 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.net.URL;
+import java.net.URI;
+import java.util.Locale;
 
 /** Small, stable local-storage models. Session cookies are never stored here. */
 public final class Models {
     private Models() {}
 
+    /** Public, unsigned B站 image URLs only. Suitable for display and catalogue backups. */
+    public static String safeCoverUrl(String value) {
+        if (value == null || value.isEmpty() || value.length() > 2048) return "";
+        try {
+            URI uri = new URI(value);
+            String host = uri.getHost();
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null
+                    || !host.toLowerCase(Locale.ROOT).matches("i[0-9]+\\.hdslb\\.com")
+                    || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
+                    || (uri.getPort() != -1 && uri.getPort() != 443)) return "";
+            String path = uri.getRawPath();
+            if (path == null || !path.matches("(?i)/bfs/[a-z0-9/_-]+\\.(jpg|jpeg|png|webp|avif)(@[a-z0-9_.-]+)?")) return "";
+            return "https://" + host.toLowerCase(Locale.ROOT) + path;
+        } catch (Exception ignored) { return ""; }
+    }
+
     public static class Series {
         public String id = "";
         public String title = "";
+        public String coverUrl = "";
         public ArrayList<Episode> episodes = new ArrayList<>();
 
         public Series() {}
@@ -27,6 +46,7 @@ public final class Models {
             JSONObject json = new JSONObject();
             json.put("id", id);
             json.put("title", title);
+            json.put("coverUrl", safeCoverUrl(coverUrl));
             JSONArray items = new JSONArray();
             for (Episode episode : episodes) items.put(episode.toJson());
             json.put("episodes", items);
@@ -38,6 +58,7 @@ public final class Models {
             if (json == null) return series;
             series.id = json.optString("id", "");
             series.title = json.optString("title", "");
+            series.coverUrl = safeCoverUrl(json.optString("coverUrl", ""));
             JSONArray items = json.optJSONArray("episodes");
             if (items != null) {
                 for (int i = 0; i < items.length(); i++) {

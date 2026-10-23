@@ -26,6 +26,7 @@ public final class ParserSelfTest {
         confirmedLoginState();
         trustedHostsAndCookies();
         persistenceRoundTrip();
+        publicCoverMetadata();
         serverErrorsRemainErrors();
         System.out.println("ParserSelfTest passed: " + assertions + " assertions (offline fixtures)");
     }
@@ -295,6 +296,47 @@ public final class ParserSelfTest {
         expectFailure("未返回有效数据", () -> invoke(method, CLIENT, json("{\"code\":0,\"data\":null}"), "测试"));
         JSONObject payload = (JSONObject) invoke(method, CLIENT, json("{\"code\":0,\"result\":{\"quality\":80}}"), "测试");
         check(payload.optInt("quality") == 80, "Successful payload returned");
+    }
+
+    private static void publicCoverMetadata() throws Exception {
+        String cover = "https://i0.hdslb.com/bfs/bangumi/image/abc123.jpg";
+        check(Models.safeCoverUrl(cover).equals(cover), "Public HTTPS artwork accepted");
+        check(Models.safeCoverUrl("https://I1.HDSLB.COM:443/bfs/archive/abc.png").equals("https://i1.hdslb.com/bfs/archive/abc.png"), "Cover authority canonicalized without preserving credentials");
+        for (String unsafe : new String[]{
+                "http://i0.hdslb.com/bfs/archive/a.jpg", "https://i0.hdslb.com.evil.test/bfs/a.jpg",
+                "https://evil.test/bfs/a.jpg", "https://user:pass@i0.hdslb.com/bfs/a.jpg",
+                "https://i0.hdslb.com/bfs/a.jpg?token=secret", "https://i0.hdslb.com/bfs/a.jpg#fragment",
+                "https://i0.hdslb.com:8443/bfs/a.jpg", "https://i0.hdslb.com/bfs/%2e%2e/a.jpg",
+                "https://i0.hdslb.com/bfs/a.m4s", "https://i0.hdslb.com/bfs/a.jpg\nCookie: secret",
+                "https://i0.hdslb.com/not-public/a.jpg"})
+            check(Models.safeCoverUrl(unsafe).isEmpty(), "Unsafe/non-image cover rejected");
+        Series series = new Series();
+        series.id = "ss123"; series.title = "Existing title"; series.coverUrl = cover;
+        Episode original = new Episode(); original.id = "ep456"; series.episodes.add(original);
+        Series restored = Series.fromJson(new JSONObject(series.toJson().toString()));
+        check(restored.coverUrl.equals(cover) && restored.episodes.get(0).id.equals(original.id), "Cover JSON roundtrip preserves existing episodes");
+        check(Series.fromJson(json("{\"id\":\"ss123\"}")).coverUrl.isEmpty(), "Legacy series without artwork remains compatible");
+        series.coverUrl = cover + "?token=secret";
+        check(series.toJson().getString("coverUrl").isEmpty(), "Signed cover URL cannot enter persistence or backup");
+        check(Series.fromJson(json("{\"coverUrl\":\"https://evil.test/a.jpg\"}")).coverUrl.isEmpty(), "Untrusted restored covers are removed");
+        Method coverParse = BiliClient.class.getDeclaredMethod("coverFromInfo", JSONObject.class);
+        coverParse.setAccessible(true);
+        check(invoke(coverParse, null, json("{\"cover\":\"http://i0.hdslb.com/bfs/bangumi/image/abc123.jpg\"}")).equals(cover), "API HTTP artwork upgrades to HTTPS only after host/path validation");
+        check(invoke(coverParse, null, json("{\"pic\":\"//i2.hdslb.com/bfs/archive/abc.png\"}")).equals("https://i2.hdslb.com/bfs/archive/abc.png"), "Ordinary-video pic supported");
+        check(invoke(coverParse, null, json("{\"cover\":\"https://evil.test/a.jpg\",\"pic\":\"https://i2.hdslb.com/bfs/archive/abc.png\"}")).equals("https://i2.hdslb.com/bfs/archive/abc.png"), "Unsafe candidate does not prevent a safe fallback");
+        Method endpoint = BiliClient.class.getDeclaredMethod("coverEndpoint", Series.class);
+        endpoint.setAccessible(true);
+        check(invoke(endpoint, null, series).equals("https://api.bilibili.com/pgc/view/web/season?season_id=123"), "Old season artwork uses fixed season endpoint");
+        series.id = "unknown"; original.bangumi = true;
+        check(invoke(endpoint, null, series).equals("https://api.bilibili.com/pgc/view/web/season?ep_id=456"), "Legacy episode id can resolve a missing cover");
+        original.bangumi = false; original.bvid = "BV1234567890";
+        check(invoke(endpoint, null, series).equals("https://api.bilibili.com/x/web-interface/view?bvid=BV1234567890"), "Legacy BVID can resolve a missing cover");
+        original.bvid = "bad?cookie=secret"; original.aid = 123;
+        check(invoke(endpoint, null, series).equals("https://api.bilibili.com/x/web-interface/view?aid=123"), "Legacy positive aid fallback never interpolates an untrusted identifier");
+        original.localUri = "content://media/1";
+        check(CLIENT.resolveCover(series).isEmpty(), "Local videos never trigger cover API requests");
+        check(series.title.equals("Existing title") && series.episodes.get(0) == original, "Cover refresh never rewrites existing catalogue data");
+        check(CLIENT.resolveCover(new Series()).isEmpty(), "Unknown/empty ids never trigger network");
     }
 
     @SuppressWarnings("unchecked")

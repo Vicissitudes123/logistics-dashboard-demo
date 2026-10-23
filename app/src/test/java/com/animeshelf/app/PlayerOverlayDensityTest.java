@@ -49,11 +49,19 @@ public class PlayerOverlayDensityTest {
             }
             // Replacing drawables during playback or fullscreen must retain the density fix.
             host.playing = true;
+            overlay.setActive(true);
             overlay.refresh();
             overlay.setFullScreen(true);
             measure(parent, density);
             assertIcon(overlay, "暂停", density);
             assertIcon(overlay, "退出全屏", density);
+            assertIcon(overlay, "锁定播放器", density);
+            find(overlay, "锁定播放器").performClick();
+            assertTrue(overlay.isLocked());
+            measure(parent, density);
+            assertIcon(overlay, "解锁播放器", density);
+            find(overlay, "解锁播放器").performClick();
+            assertFalse(overlay.isLocked());
         } finally {
             overlay.dispose();
         }

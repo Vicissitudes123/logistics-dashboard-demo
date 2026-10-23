@@ -2,6 +2,9 @@ package com.animeshelf.app;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.database.StandaloneDatabaseProvider;
@@ -24,8 +27,10 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 
@@ -39,22 +44,32 @@ public final class MediaRepository {
     private final Context context;
     private final Store store;
     private final SimpleCache cache;
+    private final File storageDirectory;
     private final DefaultDataSource.Factory upstream;
     private final Map<String, MediaHttpDataSource.Request> routes = new ConcurrentHashMap<>();
+    private final DownloadTelemetry telemetry = new DownloadTelemetry();
+    private final Handler telemetryHandler = new Handler(Looper.getMainLooper());
+    private boolean telemetryScheduled;
+    private final Runnable telemetryTick = () -> { telemetryScheduled = false; sampleTelemetry(); };
     final DownloadManager manager;
     public static final class OfflineItem {
         public String key, episodeId, title, qualityLabel, status, errorDetail;
         public Models.Episode episode;
         public Models.Quality quality;
-        public boolean complete, failed, paused;
+        public boolean complete, failed, paused, queued, downloading, waitingForNetwork;
+        public DownloadStatus.State state;
+        public DownloadStatus.FailureKind failureKind = DownloadStatus.FailureKind.NONE;
         public float percent;
         public long bytesDownloaded;
+        /** -1 means unknown; speed is 0 while the item is not actively downloading. */
+        public long totalBytes = -1, bytesPerSecond = -1, estimatedRemainingSeconds = -1, availableBytes = -1;
     }
     private MediaRepository(Context context) {
         this.context = context;
         store = new Store(context);
+        storageDirectory = context.getFilesDir();
         StandaloneDatabaseProvider database = new StandaloneDatabaseProvider(context);
-        cache = new SimpleCache(new File(context.getFilesDir(), "offline-media"), new NoOpCacheEvictor(), database);
+        cache = new SimpleCache(new File(storageDirectory, "offline-media"), new NoOpCacheEvictor(), database);
         // Restore routes before the manager can resume persisted requests after process death.
         for (JSONObject saved : store.savedDownloads()) {
             try { register(saved.getString("key"), Models.Quality.fromJson(saved.getJSONObject("quality"))); }
@@ -72,10 +87,41 @@ public final class MediaRepository {
         manager.setMaxParallelDownloads(2);
         manager.addListener(new DownloadManager.Listener() {
             @Override public void onDownloadChanged(DownloadManager downloadManager, Download download, Exception finalException) {
-                if (finalException != null) store.saveDownloadError(download.request.id, MediaErrors.describe(finalException));
+                if (finalException != null) store.saveDownloadError(download.request.id, DownloadStatus.safeFailure(finalException));
                 else if (download.state == Download.STATE_COMPLETED) store.clearDownloadError(download.request.id);
+                sampleTelemetry();
             }
+            @Override public void onInitialized(DownloadManager downloadManager) { sampleTelemetry(); }
+            @Override public void onDownloadsPausedChanged(DownloadManager downloadManager, boolean downloadsPaused) { sampleTelemetry(); }
         });
+        sampleTelemetry();
+    }
+
+    /** Read the partition that contains this application's offline-media cache. */
+    public long availableStorageBytes() {
+        try { return storageDirectory.getUsableSpace(); }
+        catch (SecurityException unavailable) { return -1; }
+    }
+
+    private void sampleTelemetry() {
+        if (Looper.myLooper() != Looper.getMainLooper()) { telemetryHandler.post(this::sampleTelemetry); return; }
+        long now = SystemClock.elapsedRealtime();
+        boolean anyActive = false;
+        Set<String> live = new HashSet<>();
+        for (Download download : manager.getCurrentDownloads()) {
+            live.add(download.request.id);
+            boolean active = download.state == Download.STATE_DOWNLOADING && !manager.getDownloadsPaused();
+            anyActive |= active;
+            telemetry.sample(download.request.id, now, download.getBytesDownloaded(), active);
+        }
+        telemetry.retain(live);
+        if (anyActive && !telemetryScheduled) {
+            telemetryScheduled = true;
+            telemetryHandler.postDelayed(telemetryTick, 1000);
+        } else if (!anyActive && telemetryScheduled) {
+            telemetryHandler.removeCallbacks(telemetryTick);
+            telemetryScheduled = false;
+        }
     }
     private void register(String key, Models.Quality q) {
         registerTrack(key + ":v", q.videoCandidates(), q.headers, "视频");
@@ -110,6 +156,7 @@ public final class MediaRepository {
     public void enqueue(Models.Episode e, Models.Quality q) {
         if (q.videoUrl == null || q.videoUrl.isEmpty()) throw new IllegalArgumentException("视频地址为空，请重新解析");
         if (e.localUri != null && !e.localUri.isEmpty()) throw new IllegalArgumentException("本地视频无需下载");
+        DownloadStatus.requireStartSpace(availableStorageBytes());
         String key = key(e, q);
         for (OfflineItem old : downloads()) {
             if (old.episodeId.equals(e.id) && old.quality.id.equals(q.id) && !old.key.equals(key) && !old.complete)
@@ -119,6 +166,7 @@ public final class MediaRepository {
         register(key, q);
         store.clearDownloadError(key + ":v");
         store.clearDownloadError(key + ":a");
+        telemetry.forget(key + ":v"); telemetry.forget(key + ":a");
         addTrack(key + ":v", q.videoUrl);
         if (q.audioUrl != null && !q.audioUrl.isEmpty()) addTrack(key + ":a", q.audioUrl);
         DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true);
@@ -128,12 +176,13 @@ public final class MediaRepository {
             .setMimeType("video/mp4").setCustomCacheKey(id).build();
         DownloadService.sendAddDownload(context, AnimeDownloadService.class, request, true);
     }
-    public void pauseAll() { DownloadService.sendPauseDownloads(context, AnimeDownloadService.class, false); }
-    public void resumeAll() { DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true); }
+    public void pauseAll() { telemetry.clear(); DownloadService.sendPauseDownloads(context, AnimeDownloadService.class, false); }
+    public void resumeAll() { telemetry.clear(); DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true); }
     public void remove(OfflineItem item) {
         DownloadService.sendRemoveDownload(context, AnimeDownloadService.class, item.key + ":v", true);
         if (hasAudio(item.quality)) DownloadService.sendRemoveDownload(context, AnimeDownloadService.class, item.key + ":a", true);
         store.deleteDownload(item.key);
+        telemetry.forget(item.key + ":v"); telemetry.forget(item.key + ":a");
     }
     private boolean hasAudio(Models.Quality quality) { return quality.audioUrl != null && !quality.audioUrl.isEmpty(); }
     private Download track(String id) {
@@ -142,6 +191,7 @@ public final class MediaRepository {
     }
     public List<OfflineItem> downloads() {
         ArrayList<OfflineItem> items = new ArrayList<>();
+        long availableBytes = availableStorageBytes();
         for (JSONObject saved : store.savedDownloads()) {
             try {
                 OfflineItem item = new OfflineItem();
@@ -153,26 +203,48 @@ public final class MediaRepository {
                 item.qualityLabel = item.quality.label;
                 Download video = track(item.key + ":v"), audio = hasAudio(item.quality) ? track(item.key + ":a") : null;
                 boolean audioNeeded = hasAudio(item.quality);
-                item.complete = complete(video) && (!audioNeeded || complete(audio));
-                item.failed = failed(video) || failed(audio);
+                DownloadStatus.Snapshot snapshot = DownloadStatus.summarize(video, audio, audioNeeded,
+                    manager.getDownloadsPaused(), manager.getNotMetRequirements());
+                item.state = snapshot.state;
+                item.complete = item.state == DownloadStatus.State.COMPLETED;
+                item.failed = item.state == DownloadStatus.State.FAILED;
+                item.paused = item.state == DownloadStatus.State.PAUSED;
+                item.queued = item.state == DownloadStatus.State.QUEUED || item.state == DownloadStatus.State.ADDING;
+                item.downloading = item.state == DownloadStatus.State.DOWNLOADING;
+                item.waitingForNetwork = item.state == DownloadStatus.State.WAITING_NETWORK;
                 item.errorDetail = failureDetail(item.key, video, audio);
-                item.paused = !item.complete && !item.failed && manager.getDownloadsPaused();
-                item.bytesDownloaded = bytes(video) + bytes(audio);
-                long total = total(video) + (audioNeeded ? total(audio) : 0);
-                boolean known = total(video) > 0 && (!audioNeeded || total(audio) > 0);
-                item.percent = item.complete ? 100f : known ? Math.min(99f, 100f * item.bytesDownloaded / total) : -1f;
-                if (item.complete) item.status = "已离线 · 可断网播放";
-                else if (item.failed) item.status = "下载失败 · 可重新解析重试";
-                else if (item.paused) item.status = "已暂停";
-                else if (manager.isWaitingForRequirements()) item.status = "等待网络";
-                else if (video == null || (audioNeeded && audio == null)) item.status = "正在加入队列";
-                else item.status = "下载中";
+                item.failureKind = failureKind(item.key, video, audio);
+                item.bytesDownloaded = snapshot.bytesDownloaded;
+                item.totalBytes = snapshot.totalBytes;
+                item.percent = snapshot.percent;
+                item.availableBytes = availableBytes;
+                long videoRate = speed(video), audioRate = audioNeeded ? speed(audio) : 0;
+                item.bytesPerSecond = !item.downloading ? 0 : videoRate < 0 || audioRate < 0
+                    ? -1 : DownloadStatus.add(videoRate, audioRate);
+                item.estimatedRemainingSeconds = item.complete ? 0 : item.downloading
+                    ? DownloadTelemetry.remainingSeconds(item.totalBytes, item.bytesDownloaded, item.bytesPerSecond) : -1;
+                item.status = DownloadStatus.label(item.state);
+                if (item.failed) item.status += " · " + DownloadStatus.failureSummary(item.failureKind);
                 items.add(item);
             } catch (Exception ignored) { }
         }
         return items;
     }
     private boolean complete(Download d) { return d != null && d.state == Download.STATE_COMPLETED; }
+    private long speed(Download download) {
+        return download == null || download.state != Download.STATE_DOWNLOADING ? 0
+            : telemetry.bytesPerSecond(download.request.id);
+    }
+    private DownloadStatus.FailureKind failureKind(String key, Download video, Download audio) {
+        DownloadStatus.FailureKind result = DownloadStatus.FailureKind.NONE;
+        if (failed(video)) result = DownloadStatus.classifySaved(store.downloadError(key + ":v"));
+        if (failed(audio)) {
+            DownloadStatus.FailureKind next = DownloadStatus.classifySaved(store.downloadError(key + ":a"));
+            if (result == DownloadStatus.FailureKind.NONE || result == DownloadStatus.FailureKind.OTHER
+                || next == DownloadStatus.FailureKind.STORAGE) result = next;
+        }
+        return result;
+    }
     private String failureDetail(String key, Download video, Download audio) {
         StringBuilder detail = new StringBuilder();
         if (failed(video)) appendFailure(detail, "视频", store.downloadError(key + ":v"));
@@ -185,8 +257,6 @@ public final class MediaRepository {
             ? "旧任务未保存 HTTP 详情，请重新解析重试后查看。" : failure);
     }
     private boolean failed(Download d) { return d != null && d.state == Download.STATE_FAILED; }
-    private long bytes(Download d) { return d == null ? 0 : d.getBytesDownloaded(); }
-    private long total(Download d) { return d == null || d.contentLength < 0 ? 0 : d.contentLength; }
     public boolean isDownloaded(Models.Episode e, Models.Quality q) {
         String key = key(e, q);
         return complete(track(key + ":v")) && (!hasAudio(q) || complete(track(key + ":a")));

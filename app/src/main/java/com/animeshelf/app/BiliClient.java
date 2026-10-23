@@ -108,6 +108,43 @@ public final class BiliClient {
         throw new ClientException("未找到可识别的番剧或视频编号，请从视频播放页复制分享链接");
     }
 
+    /** Fetch only a missing cover for an old catalogue entry; never replaces its metadata or episodes. */
+    public String resolveCover(Series series) throws Exception {
+        String endpoint = coverEndpoint(series);
+        if (endpoint.isEmpty()) return "";
+        JSONObject info = checkedPayload(getJson(endpoint), "获取封面失败");
+        return coverFromInfo(info);
+    }
+
+    private static String coverEndpoint(Series series) {
+        if (series == null) return "";
+        if (series.id != null && series.id.matches("ss[1-9][0-9]{0,18}"))
+            return "https://api.bilibili.com/pgc/view/web/season?season_id=" + series.id.substring(2);
+        if (series.id != null && series.id.matches("BV[0-9A-Za-z]{10}"))
+            return "https://api.bilibili.com/x/web-interface/view?bvid=" + series.id;
+        if (series.episodes != null) for (Episode episode : series.episodes) {
+            if (episode == null || (episode.localUri != null && !episode.localUri.isEmpty())) continue;
+            if (episode.bangumi && episode.id != null && episode.id.matches("ep[1-9][0-9]{0,18}"))
+                return "https://api.bilibili.com/pgc/view/web/season?ep_id=" + episode.id.substring(2);
+            if (episode.bvid != null && episode.bvid.matches("BV[0-9A-Za-z]{10}"))
+                return "https://api.bilibili.com/x/web-interface/view?bvid=" + episode.bvid;
+            if (episode.aid > 0)
+                return "https://api.bilibili.com/x/web-interface/view?aid=" + episode.aid;
+        }
+        return "";
+    }
+
+    private static String coverFromInfo(JSONObject info) {
+        for (String field : new String[]{"cover", "pic", "horizontal_cover", "square_cover"}) {
+            String cover = info.optString(field, "");
+            if (cover.startsWith("//")) cover = "https:" + cover;
+            else if (cover.regionMatches(true, 0, "http://", 0, 7)) cover = "https://" + cover.substring(7);
+            cover = Models.safeCoverUrl(cover);
+            if (!cover.isEmpty()) return cover;
+        }
+        return "";
+    }
+
     /** Returns only actual non-DRM media streams available to the current session. */
     public List<Quality> qualities(Episode episode) throws Exception {
         if (episode == null) throw new ClientException("缺少集数信息");
@@ -165,6 +202,7 @@ public final class BiliClient {
         Series series = new Series();
         series.id = "ss" + seasonId;
         series.title = nonEmpty(info.optString("title"), "未命名番剧");
+        series.coverUrl = coverFromInfo(info);
         Set<String> seen = new HashSet<>();
         addEpisodes(series, info.optJSONArray("episodes"), seen);
         // Some season types store the main episodes in a section instead.
@@ -218,6 +256,7 @@ public final class BiliClient {
         Series series = new Series();
         series.id = nonEmpty(info.optString("bvid"), bvid);
         series.title = nonEmpty(info.optString("title"), bvid);
+        series.coverUrl = coverFromInfo(info);
         JSONArray pages = info.optJSONArray("pages");
         if (pages == null || pages.length() == 0) throw new ClientException("视频接口未返回分集信息");
         for (int i = 0; i < pages.length(); i++) {

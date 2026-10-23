@@ -385,6 +385,187 @@ public class PlayerOverlayTest {
         assertEquals(observations, host.observations);
     }
 
+    @Test public void fullscreenLockLeavesAPersistentTouchableUnlockAndRestoresControls() {
+        assertFalse(find("锁定播放器").isShown());
+        assertFalse(find("解锁播放器").isShown());
+        lockFullscreen();
+        View unlock = find("解锁播放器");
+        assertTrue(unlock.isShown());
+        assertTrue(bounds(unlock).width() >= 48 && bounds(unlock).height() >= 48);
+        assertFalse(overlay.areControlsVisible());
+        assertFalse(find("返回").isShown());
+        assertFalse(find("播放进度").isShown());
+
+        idle(20000);
+        host.playing = false;
+        overlay.refresh();
+        overlay.showControls();
+        assertTrue("Neither timeout nor paused refresh hides the only way to unlock", unlock.isShown());
+        assertTrue(overlay.isLocked());
+        assertFalse(overlay.areControlsVisible());
+
+        tapControl("解锁播放器");
+        assertFalse(overlay.isLocked());
+        assertFalse(unlock.isShown());
+        assertTrue(overlay.areControlsVisible());
+        assertTrue(find("播放进度").isEnabled());
+        assertTrue(find("播放").isEnabled());
+        tapControl("播放");
+        assertEquals(1, host.playbackToggles);
+        assertTrue(host.playing);
+
+        overlay.hideControls();
+        down(160, 160);
+        touch(MotionEvent.ACTION_MOVE, 300, 160);
+        touch(MotionEvent.ACTION_UP, 300, 160);
+        assertEquals("Unlock restores ordinary picture gestures", 1, host.seekCalls);
+    }
+
+    @Test public void lockedTouchStreamsCannotSeekAdjustVolumeBrightnessOrActivateHiddenControls() {
+        overlay.setFullScreen(true);
+        layout(640, 360);
+        String[] normalButtons = {"返回", "回到首页", "暂停", "播放速度", "选集", "显示方式", "退出全屏"};
+        Rect[] targets = new Rect[normalButtons.length];
+        for (int i = 0; i < normalButtons.length; i++) targets[i] = bounds(find(normalButtons[i]));
+        Rect timeline = bounds(find("播放进度"));
+        lockFullscreen();
+        AudioManager audio = (AudioManager) activity.getSystemService(Context.AUDIO_SERVICE);
+        int initialVolume = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) / 2;
+        audio.setStreamVolume(AudioManager.STREAM_MUSIC, initialVolume, 0);
+        int[] actions = host.actions();
+
+        int observations = host.observations;
+        down(160, 160);
+        touch(MotionEvent.ACTION_MOVE, 320, 164);
+        touch(MotionEvent.ACTION_UP, 320, 164);
+        assertEquals("A locked touch stream does not consult the playback host", observations, host.observations);
+
+        down(160, 200);
+        touch(MotionEvent.ACTION_MOVE, 162, 100);
+        touch(MotionEvent.ACTION_UP, 162, 100);
+        down(480, 200);
+        touch(MotionEvent.ACTION_MOVE, 478, 100);
+        touch(MotionEvent.ACTION_UP, 478, 100);
+        tap(200, 160);
+        idle(60);
+        tap(200, 160);
+        idle(ViewConfiguration.getDoubleTapTimeout() + 50);
+        down(200, 160);
+        idle(ViewConfiguration.getLongPressTimeout() + 1);
+        touch(MotionEvent.ACTION_UP, 200, 160);
+        for (Rect target : targets) tap(target.centerX(), target.centerY());
+        down(timeline.left + 20, timeline.centerY());
+        touch(MotionEvent.ACTION_MOVE, timeline.right - 20, timeline.centerY());
+        touch(MotionEvent.ACTION_UP, timeline.right - 20, timeline.centerY());
+        // A queued accessibility click must obey the same lock as real touch dispatch.
+        for (String description : normalButtons) find(description).performClick();
+        overlay.performClick();
+        idle(ViewConfiguration.getLongPressTimeout() + 50);
+
+        assertArrayEquals("All host actions remain untouched while locked", actions, host.actions());
+        assertEquals(initialVolume, audio.getStreamVolume(AudioManager.STREAM_MUSIC));
+        assertEquals(.5f, host.brightness, .001f);
+        assertEquals(1f, host.speed, .001f);
+        assertEquals(60000, host.position);
+        assertTrue(overlay.isLocked());
+        assertFalse(overlay.areControlsVisible());
+        assertTrue(find("解锁播放器").isShown());
+    }
+
+    @Test public void lockingDuringTemporaryBoostRestoresTheExactSpeedAndDiscardsRelease() {
+        for (float original : new float[]{.75f, 1.5f}) {
+            overlay.unlock();
+            overlay.setFullScreen(true);
+            layout(640, 360);
+            host.speed = original;
+            down(200, 160);
+            idle(ViewConfiguration.getLongPressTimeout() + 1);
+            assertEquals(2f, host.speed, .001f);
+            int changes = host.temporarySpeedChanges;
+            // Simulate locking while the finger is still down and the bars are hidden.
+            find("锁定播放器").performClick();
+            assertTrue(overlay.isLocked());
+            assertEquals(original, host.speed, .001f);
+            assertEquals(changes + 1, host.temporarySpeedChanges);
+            touch(MotionEvent.ACTION_UP, 200, 160);
+            idle(ViewConfiguration.getLongPressTimeout() + 50);
+            assertEquals(changes + 1, host.temporarySpeedChanges);
+            assertEquals(0, host.persistedSpeedChanges);
+            assertEquals(0, host.playbackToggles);
+            assertEquals(0, host.seekCalls);
+        }
+    }
+
+    @Test public void lockingCancelsPendingLongPressPictureSeekAndTimelineScrub() {
+        for (String gesture : new String[]{"pending hold", "picture seek", "timeline scrub"}) {
+            overlay.unlock();
+            overlay.setFullScreen(true);
+            layout(640, 360);
+            float x = 200, y = 160;
+            if (gesture.equals("timeline scrub")) {
+                Rect timeline = bounds(find("播放进度"));
+                x = timeline.right - 30; y = timeline.centerY();
+                down(timeline.left + 30, y);
+                touch(MotionEvent.ACTION_MOVE, x, y);
+            } else {
+                down(x, y);
+                if (gesture.equals("picture seek")) {
+                    x = 300;
+                    touch(MotionEvent.ACTION_MOVE, x, y);
+                }
+            }
+            assertEquals(gesture + " has not committed", 0, host.seekCalls);
+            find("锁定播放器").performClick();
+            assertTrue(overlay.isLocked());
+            touch(MotionEvent.ACTION_UP, x, y);
+            idle(ViewConfiguration.getLongPressTimeout() + 50);
+            assertEquals(gesture + " cannot commit after locking", 0, host.seekCalls);
+            assertEquals(0, host.temporarySpeedChanges);
+            assertEquals(0, host.playbackToggles);
+        }
+    }
+
+    @Test public void leavingFullscreenDeactivatingAndDisposingCannotStrandTheLock() {
+        for (String reset : new String[]{"exit fullscreen", "inactive", "dispose"}) {
+            lockFullscreen();
+            if (reset.equals("exit fullscreen")) overlay.setFullScreen(false);
+            else if (reset.equals("inactive")) overlay.setActive(false);
+            else overlay.dispose();
+            assertFalse(reset + " clears the lock", overlay.isLocked());
+            assertFalse(find("解锁播放器").isShown());
+            assertFalse(find("锁定播放器").isShown());
+            if (!reset.equals("exit fullscreen")) {
+                int observations = host.observations;
+                idle(5000);
+                assertEquals(reset + " stops the refresh timer", observations, host.observations);
+                overlay.setActive(true);
+            }
+            layout(640, 360);
+            assertTrue(overlay.areControlsVisible());
+            int toggles = host.playbackToggles;
+            tap(200, 160);
+            idle(60);
+            tap(200, 160);
+            idle(ViewConfiguration.getDoubleTapTimeout() + 50);
+            assertEquals(reset + " leaves playback controls usable", toggles + 1, host.playbackToggles);
+        }
+    }
+
+    private void lockFullscreen() {
+        overlay.setActive(true);
+        overlay.setFullScreen(true);
+        layout(640, 360);
+        tapControl("锁定播放器");
+        assertTrue("Fullscreen lock receives a real dispatched tap", overlay.isLocked());
+        layout(640, 360);
+    }
+    private void tapControl(String description) {
+        Rect target = bounds(find(description));
+        tap(target.centerX(), target.centerY());
+        Shadows.shadowOf(Looper.getMainLooper()).idle();
+        layout(640, 360);
+    }
+
     private void layout(int width, int height) {
         parent.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
@@ -461,6 +642,11 @@ public class PlayerOverlayTest {
         float speed = 1f, brightness = .5f, holdSpeed = 2f;
         int controlsTimeoutMs = 3500;
         int playbackToggles, fullscreenToggles, seekCalls, observations, persistedSpeedChanges, temporarySpeedChanges;
+        int brightnessChanges, speedChoices, episodeChoices, displayChoices, backCalls, homeCalls;
+        int[] actions() {
+            return new int[]{playbackToggles, fullscreenToggles, seekCalls, persistedSpeedChanges, temporarySpeedChanges,
+                brightnessChanges, speedChoices, episodeChoices, displayChoices, backCalls, homeCalls};
+        }
         @Override public boolean hasPlayer() { observations++; return true; }
         @Override public boolean isPlaying() { observations++; return playing; }
         @Override public boolean canSeek() { observations++; return seekable; }
@@ -473,13 +659,13 @@ public class PlayerOverlayTest {
         @Override public void seekTo(long value) { seekCalls++; position = value; }
         @Override public void setSpeed(float value) { persistedSpeedChanges++; speed = value; }
         @Override public float brightness() { observations++; return brightness; }
-        @Override public void setBrightness(float value) { brightness = value; }
+        @Override public void setBrightness(float value) { brightnessChanges++; brightness = value; }
         @Override public void setTemporarySpeed(float value) { temporarySpeedChanges++; speed = value; }
-        @Override public void chooseSpeed() { }
-        @Override public void chooseEpisode() { }
-        @Override public void chooseDisplay() { }
-        @Override public void back() { }
-        @Override public void home() { }
+        @Override public void chooseSpeed() { speedChoices++; }
+        @Override public void chooseEpisode() { episodeChoices++; }
+        @Override public void chooseDisplay() { displayChoices++; }
+        @Override public void back() { backCalls++; }
+        @Override public void home() { homeCalls++; }
         @Override public void toggleFullScreen() { fullscreenToggles++; }
     }
 }

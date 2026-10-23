@@ -64,7 +64,7 @@ public final class PlayerOverlay extends FrameLayout {
     private final GestureDetector taps;
     private final LinearLayout topBar, bottomBar;
     private final TextView title, subtitle, position, duration, feedback;
-    private final ImageButton playButton, fullButton;
+    private final ImageButton playButton, fullButton, lockButton, unlockButton;
     private final Button speedButton;
     private final SeekBar seekBar;
     private boolean active, controlsVisible = true, fullScreen, scrubbing, scrubCanceled, touchAccepted, multiTouch, wasPlaying;
@@ -72,11 +72,11 @@ public final class PlayerOverlay extends FrameLayout {
     private int appliedVolume = -1;
     private float appliedBrightness = Float.NaN;
     private float edgeInsetPx, speedBeforeHold = 1f;
-    private boolean temporaryBoost, longPressConsumed, doubleTapConsumed;
+    private boolean temporaryBoost, longPressConsumed, doubleTapConsumed, locked;
 
     private final Runnable hide = new Runnable() {
         @Override public void run() {
-            if (controlsTimeoutMs() != 0 && active && host.isPlaying() && !scrubbing && !gestures.isDragging()) hideControls();
+            if (!locked && controlsTimeoutMs() != 0 && active && host.isPlaying() && !scrubbing && !gestures.isDragging()) hideControls();
         }
     };
     private final Runnable hideFeedback = new Runnable() {
@@ -115,6 +115,9 @@ public final class PlayerOverlay extends FrameLayout {
         subtitle.setPadding(0, dp(2), 0, 0);
         titles.addView(title); titles.addView(subtitle);
         topBar.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
+        lockButton = icon("锁定播放器", Glyph.LOCK, this::lock);
+        lockButton.setTooltipText("锁定播放器"); lockButton.setVisibility(GONE);
+        topBar.addView(lockButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         topBar.addView(icon("回到首页", Glyph.HOME, host::home), new LinearLayout.LayoutParams(dp(48), dp(48)));
         addView(topBar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
 
@@ -157,23 +160,32 @@ public final class PlayerOverlay extends FrameLayout {
         feedback.setBackground(bubble); feedback.setVisibility(GONE);
         feedback.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         addView(feedback, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        // This is independent of both auto-hiding bars, so locking always leaves
+        // a visible, reachable way out without blocking the system Back action.
+        unlockButton = icon("解锁播放器", Glyph.UNLOCK, this::unlock);
+        unlockButton.setTooltipText("解锁播放器"); unlockButton.setVisibility(GONE);
+        FrameLayout.LayoutParams unlockPosition = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START | Gravity.CENTER_VERTICAL);
+        unlockPosition.setMarginStart(dp(24));
+        addView(unlockButton, unlockPosition);
 
         seekBar.setOnTouchListener((view, event) -> {
+            if (locked) return true;
             if (event.getActionMasked() == MotionEvent.ACTION_CANCEL || event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) scrubCanceled = true;
             return false;
         });
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onStartTrackingTouch(SeekBar bar) {
+                if (locked) { scrubCanceled = true; return; }
                 scrubbing = true; scrubCanceled = false; previewMs = host.positionMs();
                 handler.removeCallbacks(hide); showControls();
             }
             @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
-                if (!fromUser || !host.canSeek() || host.durationMs() <= 0) return;
+                if (locked || !fromUser || !host.canSeek() || host.durationMs() <= 0) return;
                 previewMs = Math.max(0, Math.min(host.durationMs(), Math.round(host.durationMs() * (value / 1000d))));
                 position.setText(time(previewMs)); showFeedback("进度 " + time(previewMs) + " / " + time(host.durationMs()));
             }
             @Override public void onStopTrackingTouch(SeekBar bar) {
-                if (!scrubCanceled && host.canSeek() && previewMs >= 0) host.seekTo(previewMs);
+                if (!locked && !scrubCanceled && host.canSeek() && previewMs >= 0) host.seekTo(previewMs);
                 scrubbing = false; previewMs = -1;
                 refresh(); dismissFeedbackSoon(); scheduleHide();
             }
@@ -182,11 +194,11 @@ public final class PlayerOverlay extends FrameLayout {
         taps = new GestureDetector(context, new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onDown(MotionEvent event) { return true; }
             @Override public boolean onSingleTapConfirmed(MotionEvent event) {
-                if (!active || multiTouch) return false;
+                if (locked || !active || multiTouch) return false;
                 performClick(); return true;
             }
             @Override public void onLongPress(MotionEvent event) {
-                if (!active || !touchAccepted || multiTouch || scrubbing || longPressConsumed || doubleTapConsumed
+                if (locked || !active || !touchAccepted || multiTouch || scrubbing || longPressConsumed || doubleTapConsumed
                     || gestures.getMode() != PlaybackGestures.Mode.PENDING || !host.hasPlayer() || !host.isPlaying()) return;
                 float speed = host.speed();
                 speedBeforeHold = Float.isNaN(speed) || Float.isInfinite(speed) || speed <= 0 ? 1f : speed;
@@ -199,7 +211,7 @@ public final class PlayerOverlay extends FrameLayout {
                 showFeedback(speedText(heldSpeed) + " 加速中\n松手恢复 " + speedText(speedBeforeHold));
             }
             @Override public boolean onDoubleTap(MotionEvent event) {
-                if (!active || multiTouch || !host.hasPlayer()) return false;
+                if (locked || !active || multiTouch || !host.hasPlayer()) return false;
                 doubleTapConsumed = true;
                 host.togglePlayback(); refresh();
                 showFeedback(host.isPlaying() ? "继续播放" : "已暂停"); dismissFeedbackSoon();
@@ -213,18 +225,41 @@ public final class PlayerOverlay extends FrameLayout {
 
     public void setActive(boolean value) {
         active = value;
-        cancelInteraction();
+        if (!value) locked = false;
+        cancelInteraction(); updateLockControls();
         handler.removeCallbacks(update);
-        if (value) { showControls(); handler.post(update); }
+        if (value) { refresh(); showControls(); handler.post(update); }
         else { handler.removeCallbacks(hide); handler.removeCallbacks(hideFeedback); feedback.setVisibility(GONE); }
     }
 
     public void setTitle(String name, String detail) { title.setText(name); subtitle.setText(detail); }
     public void setFullScreen(boolean value) {
         fullScreen = value;
+        if (!value) locked = false;
         fullButton.setImageDrawable(new ControlIcon(value ? Glyph.EXIT_FULL : Glyph.FULL, dp(32)));
         fullButton.setContentDescription(value ? "退出全屏" : "全屏");
-        cancelInteraction(); showControls();
+        cancelInteraction(); updateLockControls(); refresh(); showControls();
+    }
+
+    public boolean isLocked() { return locked; }
+
+    private void lock() {
+        if (!active || !fullScreen || locked || !host.hasPlayer()) return;
+        locked = true;
+        cancelInteraction();
+        hideControls(); refresh();
+        unlockButton.announceForAccessibility("播放器已锁定，点击解锁播放器，或按返回键解锁");
+    }
+
+    public void unlock() {
+        if (!locked) return;
+        locked = false;
+        cancelInteraction(); updateLockControls(); refresh(); showControls();
+    }
+
+    private void updateLockControls() {
+        lockButton.setVisibility(fullScreen && active && !locked ? VISIBLE : GONE);
+        unlockButton.setVisibility(fullScreen && active && locked ? VISIBLE : GONE);
     }
 
     /** Insets supplied by the window; no system gesture exclusion region is requested. */
@@ -242,10 +277,10 @@ public final class PlayerOverlay extends FrameLayout {
             stopTemporarySpeed(); feedback.setVisibility(GONE);
         }
         long length = host.durationMs();
-        boolean seekable = host.hasPlayer() && host.canSeek() && length > 0;
+        boolean seekable = !locked && host.hasPlayer() && host.canSeek() && length > 0;
         seekBar.setEnabled(seekable);
         seekBar.setAlpha(seekable ? 1f : .45f);
-        playButton.setEnabled(host.hasPlayer());
+        playButton.setEnabled(!locked && host.hasPlayer());
         playButton.setImageDrawable(new ControlIcon(host.isPlaying() ? Glyph.PAUSE : Glyph.PLAY, dp(32)));
         playButton.setContentDescription(host.isPlaying() ? "暂停" : "播放");
         speedButton.setText(speedText(host.speed()));
@@ -261,12 +296,14 @@ public final class PlayerOverlay extends FrameLayout {
     }
 
     public void showControls() {
+        if (locked) { hideControls(); return; }
+        updateLockControls();
         controlsVisible = true; topBar.setVisibility(VISIBLE); bottomBar.setVisibility(VISIBLE);
         scheduleHide();
     }
     public void hideControls() {
         controlsVisible = false; topBar.setVisibility(GONE); bottomBar.setVisibility(GONE);
-        handler.removeCallbacks(hide);
+        updateLockControls(); handler.removeCallbacks(hide);
     }
     public boolean areControlsVisible() { return controlsVisible; }
 
@@ -283,15 +320,19 @@ public final class PlayerOverlay extends FrameLayout {
         handler.removeCallbacks(hideFeedback);
         feedback.setVisibility(GONE);
     }
-    public void dispose() { active = false; cancelInteraction(); handler.removeCallbacksAndMessages(null); }
+    public void dispose() {
+        active = false; locked = false; cancelInteraction(); updateLockControls(); handler.removeCallbacksAndMessages(null);
+    }
 
     @Override public boolean performClick() {
+        if (locked) return true;
         super.performClick();
         if (controlsVisible) hideControls(); else showControls();
         return true;
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
+        if (locked) return true;
         if (!active || !host.hasPlayer()) { cancelInteraction(); return false; }
         int action = event.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
@@ -382,7 +423,7 @@ public final class PlayerOverlay extends FrameLayout {
     private void scheduleHide() {
         handler.removeCallbacks(hide);
         int timeout = controlsTimeoutMs();
-        if (timeout > 0 && active && controlsVisible && host.isPlaying() && !scrubbing && !gestures.isDragging())
+        if (!locked && timeout > 0 && active && controlsVisible && host.isPlaying() && !scrubbing && !gestures.isDragging())
             handler.postDelayed(hide, timeout);
     }
     private void showFeedback(String value) { handler.removeCallbacks(hideFeedback); feedback.setText(value); feedback.setVisibility(VISIBLE); }
@@ -396,7 +437,10 @@ public final class PlayerOverlay extends FrameLayout {
         button.setContentDescription(description); button.setBackground(controlBackground());
         // Background insets replace View padding, so set the icon padding last.
         button.setPadding(dp(8), dp(8), dp(8), dp(8));
-        button.setOnClickListener(v -> { action.run(); if (active) showControls(); }); return button;
+        button.setOnClickListener(v -> {
+            if (locked && v != unlockButton) return;
+            action.run(); if (active) showControls();
+        }); return button;
     }
     private Button label(String value, String description, Runnable action) {
         Button button = new Button(getContext()); button.setText(value); button.setTextColor(Color.WHITE); button.setTextSize(14);
@@ -408,7 +452,10 @@ public final class PlayerOverlay extends FrameLayout {
         button.setAllCaps(false); button.setMinWidth(0); button.setMinimumWidth(0); button.setMinHeight(0); button.setMinimumHeight(0);
         button.setContentDescription(description); button.setBackground(controlBackground());
         button.setPadding(dp(3), dp(7), dp(3), dp(7));
-        button.setOnClickListener(v -> { action.run(); if (active) showControls(); }); return button;
+        button.setOnClickListener(v -> {
+            if (locked) return;
+            action.run(); if (active) showControls();
+        }); return button;
     }
     private Drawable controlBackground() {
         // A mask limits the press ripple; no content layer is drawn while idle.
@@ -427,7 +474,7 @@ public final class PlayerOverlay extends FrameLayout {
             : String.format(Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
     }
 
-    private enum Glyph { PLAY, PAUSE, BACK, HOME, FULL, EXIT_FULL }
+    private enum Glyph { PLAY, PAUSE, BACK, HOME, FULL, EXIT_FULL, LOCK, UNLOCK }
     private static final class ControlIcon extends Drawable {
         private final Glyph glyph;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -448,6 +495,13 @@ public final class PlayerOverlay extends FrameLayout {
                 case PAUSE: paint.setStyle(Paint.Style.FILL); canvas.drawRoundRect(5, 2, 10, 22, 1, 1, paint); canvas.drawRoundRect(14, 2, 19, 22, 1, 1, paint); break;
                 case BACK: path.moveTo(16, 3); path.lineTo(7, 12); path.lineTo(16, 21); break;
                 case HOME: path.moveTo(3, 11); path.lineTo(12, 3); path.lineTo(21, 11); path.moveTo(6, 10); path.lineTo(6, 21); path.lineTo(10, 21); path.lineTo(10, 15); path.lineTo(14, 15); path.lineTo(14, 21); path.lineTo(18, 21); path.lineTo(18, 10); break;
+                case LOCK:
+                case UNLOCK:
+                    canvas.drawRoundRect(5, 10, 19, 22, 2, 2, paint);
+                    path.moveTo(8, 10); path.lineTo(8, 7);
+                    if (glyph == Glyph.LOCK) { path.cubicTo(8, 1, 16, 1, 16, 7); path.lineTo(16, 10); }
+                    else path.cubicTo(8, 1, 18, 1, 18, 7);
+                    path.moveTo(12, 15); path.lineTo(12, 18); break;
                 case FULL:
                     path.moveTo(9, 3); path.lineTo(3, 3); path.lineTo(3, 9); path.moveTo(15, 3); path.lineTo(21, 3); path.lineTo(21, 9);
                     path.moveTo(3, 15); path.lineTo(3, 21); path.lineTo(9, 21); path.moveTo(15, 21); path.lineTo(21, 21); path.lineTo(21, 15); break;

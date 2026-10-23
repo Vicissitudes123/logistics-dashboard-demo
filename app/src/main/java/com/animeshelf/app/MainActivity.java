@@ -33,6 +33,7 @@ import android.webkit.CookieManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -55,6 +56,12 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.charset.CodingErrorAction;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -71,9 +78,12 @@ public final class MainActivity extends Activity {
     private int accentColor = 0xFF8DB7FF;
     private static final int AQUA = Color.rgb(119, 224, 210);
     private static final int PICK_VIDEO = 101;
+    private static final int EXPORT_BACKUP = 103, IMPORT_BACKUP = 104;
+    private static final int MAX_BACKUP_BYTES = 4 * 1024 * 1024;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newFixedThreadPool(2);
+    private final ExecutorService coverMetadata = Executors.newSingleThreadExecutor();
     private LinearLayout root, header, body, nav, playerPanel, content;
     private FrameLayout videoFrame;
     private ScrollView scroll;
@@ -104,6 +114,19 @@ public final class MainActivity extends Activity {
     private EditText librarySearch;
     private LinearLayout libraryResults;
     private String libraryQuery = "";
+    private CoverLoader coverLoader;
+    private final Set<String> coverLookups = new LinkedHashSet<>();
+    private final java.util.Map<String, ImageView> libraryCovers = new LinkedHashMap<>();
+    private final java.util.Map<String, Models.Series> libraryCoverSeries = new LinkedHashMap<>();
+    private final java.util.Map<String, String> loadedCovers = new LinkedHashMap<>();
+    private volatile boolean backupBusy;
+    private static final class BackupMessage extends Exception {
+        BackupMessage(String message) { super(message); }
+    }
+    private boolean resumed, autoNextQueued, resumeNavigation;
+    private int playbackNavigationToken;
+    interface QualityResolver { List<Models.Quality> load(Models.Episode episode, String cookie) throws Exception; }
+    private QualityResolver qualityResolver = (episode, cookie) -> new BiliClient(cookie).qualities(episode);
 
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
@@ -124,6 +147,7 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(BG);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         media = MediaRepository.get(this);
+        coverLoader = new CoverLoader(this);
         buildUi();
         handler.post(ticker);
         renderLibrary();
@@ -219,6 +243,7 @@ public final class MainActivity extends Activity {
         status = text("", 12, AQUA); status.setPadding(dp(20), dp(5), dp(20), dp(5));
         status.setVisibility(View.GONE); body.addView(status);
         scroll = new ScrollView(this); scroll.setFillViewport(true);
+        scroll.setOnScrollChangeListener((view, x, y, oldX, oldY) -> loadVisibleLibraryCovers());
         content = column(); content.setPadding(dp(20), dp(10), dp(20), dp(20));
         scroll.addView(content); body.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         nav = row(); nav.setPadding(dp(12), dp(6), dp(12), dp(10)); nav.setBackgroundColor(PANEL);
@@ -294,7 +319,9 @@ public final class MainActivity extends Activity {
 
     private void renderLibraryResults() {
         if (libraryResults == null || settingsPage || seriesPage || downloadsPage) return;
+        for (ImageView image : libraryCovers.values()) coverLoader.clear(image);
         libraryResults.removeAllViews();
+        libraryCovers.clear(); libraryCoverSeries.clear(); loadedCovers.clear();
         List<Models.Series> visible = store.listVisibleSeries();
         LibraryCatalogue.Sections sections = LibraryCatalogue.build(visible, libraryQuery,
             store.getRecentVisibleSeriesId(), store::isPinned);
@@ -320,6 +347,7 @@ public final class MainActivity extends Activity {
         if (!sections.others.isEmpty()) {
             librarySection("其他番剧"); for (Models.Series series : sections.others) addLibraryCard(series);
         }
+        libraryResults.post(this::loadVisibleLibraryCovers);
     }
 
     private void librarySection(String label) {
@@ -329,16 +357,29 @@ public final class MainActivity extends Activity {
 
     private void addLibraryCard(Models.Series entry) {
         LinearLayout card = card(); card.setContentDescription("番剧：" + entry.id);
-        TextView title = text(entry.title, 18, TEXT); title.setTypeface(null, Typeface.BOLD); card.addView(title);
+        LinearLayout identity = row();
+        FrameLayout poster = new FrameLayout(this); poster.setBackground(background(PANEL_LIGHT, 8)); poster.setClipToOutline(true);
+        TextView fallback = text(entry.title.isEmpty() ? "番" : entry.title.substring(0, 1), 28, accentColor);
+        fallback.setGravity(Gravity.CENTER); poster.addView(fallback, new FrameLayout.LayoutParams(-1, -1));
+        ImageView cover = new ImageView(this); cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        cover.setContentDescription("封面：" + entry.title); poster.addView(cover, new FrameLayout.LayoutParams(-1, -1));
+        LinearLayout.LayoutParams posterSize = new LinearLayout.LayoutParams(dp(64), dp(90)); posterSize.rightMargin = dp(14);
+        identity.addView(poster, posterSize); LinearLayout labels = column();
+        TextView title = text(entry.title, 18, TEXT); title.setTypeface(null, Typeface.BOLD); title.setMaxLines(2);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END); labels.addView(title);
         String lastId = store.getLastEpisode(entry.id);
         Models.Episode episode = findEpisode(entry, lastId);
         if (episode == null && !entry.episodes.isEmpty()) episode = entry.episodes.get(0);
-        String detail = entry.episodes.size() + " 集" + (store.isPinned(entry.id) ? " · 已置顶" : "");
+        boolean watched = store.isSeriesWatched(entry);
+        String detail = entry.episodes.size() + " 集" + (watched ? " · 已看完" : lastId == null || lastId.isEmpty() ? " · 未开始" : " · 观看中")
+            + (store.isPinned(entry.id) ? " · 已置顶" : "");
         if (episode != null && lastId != null && !lastId.isEmpty()) {
             Store.Progress progress = store.getProgress(episode.id);
             detail += " · 上次第 " + episode.index + " 集 " + time(progress.positionMs);
         }
-        TextView subtitle = text(detail, 12, MUTED); subtitle.setPadding(0, dp(7), 0, dp(12)); card.addView(subtitle);
+        TextView subtitle = text(detail, 12, MUTED); subtitle.setPadding(0, dp(7), 0, dp(8)); labels.addView(subtitle);
+        identity.addView(labels, new LinearLayout.LayoutParams(0, -2, 1)); card.addView(identity);
+        libraryCovers.put(entry.id, cover); libraryCoverSeries.put(entry.id, entry);
         LinearLayout actions = row(); Models.Episode resume = episode;
         addEqual(actions, button(lastId == null || lastId.isEmpty() ? "开始观看" : "继续观看", true, v -> {
             renderSeries(entry); if (resume != null) selectEpisode(resume);
@@ -352,13 +393,51 @@ public final class MainActivity extends Activity {
         libraryResults.addView(card, gapLayout());
     }
 
+    private void loadVisibleLibraryCovers() {
+        if (dead || settingsPage || downloadsPage || seriesPage) return;
+        for (java.util.Map.Entry<String, ImageView> entry : libraryCovers.entrySet()) {
+            if (entry.getValue().getGlobalVisibleRect(new android.graphics.Rect()))
+                loadLibraryCover(libraryCoverSeries.get(entry.getKey()), entry.getValue());
+        }
+    }
+
+    private void loadLibraryCover(Models.Series series, ImageView cover) {
+        if (series == null) return;
+        if (!Models.safeCoverUrl(series.coverUrl).isEmpty()) {
+            if (!series.coverUrl.equals(loadedCovers.get(series.id))) {
+                loadedCovers.put(series.id, series.coverUrl); coverLoader.load(cover, series.coverUrl);
+            }
+            return;
+        }
+        boolean online = false;
+        for (Models.Episode episode : series.episodes) if (downloadable(episode)) { online = true; break; }
+        if (!online || !coverLookups.add(series.id)) return;
+        coverMetadata.execute(() -> {
+            try {
+                String url = new BiliClient("").resolveCover(series);
+                if (url.isEmpty()) return;
+                handler.post(() -> {
+                    if (dead) return;
+                    store.updateSeriesCover(series.id, url);
+                    Models.Series shown = libraryCoverSeries.get(series.id);
+                    if (shown != null) shown.coverUrl = url;
+                    ImageView target = libraryCovers.get(series.id);
+                    if (target != null && !settingsPage && !downloadsPage && !seriesPage
+                            && target.getGlobalVisibleRect(new android.graphics.Rect())) loadLibraryCover(shown, target);
+                });
+            } catch (Exception ignored) { /* A missing poster never blocks the local library. */ }
+        });
+    }
+
     private void showLibraryActions(Models.Series series) {
         dismissLibraryKeyboard();
         new AlertDialog.Builder(this).setTitle(series.title)
-            .setItems(new String[]{store.isPinned(series.id) ? "取消置顶" : "置顶", "从首页移除"}, (dialog, index) -> {
+            .setItems(new String[]{store.isPinned(series.id) ? "取消置顶" : "置顶", "从首页移除",
+                store.isSeriesWatched(series) ? "标记为未看完" : "标记为已看完"}, (dialog, index) -> {
                 if (index == 0) {
                     store.setPinned(series.id, !store.isPinned(series.id)); renderLibraryResults();
-                } else confirmHideSeries(series);
+                } else if (index == 1) confirmHideSeries(series);
+                else { store.setSeriesWatched(series.id, !store.isSeriesWatched(series)); renderLibraryResults(); }
             }).setNegativeButton("取消", null).show();
     }
 
@@ -404,6 +483,13 @@ public final class MainActivity extends Activity {
         settingRow("长按加速", speedText(store.getHoldSpeed()) + " · 松手恢复原速，原速更高时保持原速", "长按加速设置", this::chooseHoldSpeed);
         int timeout = store.getControlsTimeoutMs();
         settingRow("控制栏自动隐藏", timeout == 0 ? "不自动隐藏 · 仍可轻点画面收起" : (timeout / 1000f) + " 秒", "控制栏自动隐藏设置", this::chooseControlsTimeout);
+        settingRow("自动播放下一集", store.isAutoNext() ? "已开启 · 当前集结束后继续" : "已关闭 · 点击开启", "自动连播设置", () -> {
+            store.setAutoNext(!store.isAutoNext()); renderSettings();
+        });
+        settingRow("记住画质偏好", (store.isRememberQuality() ? "已开启" : "已关闭") + " · " + preferredQualityText()
+            + "\n下一集优先同清晰度与编码，缺少时提示选择。", "画质偏好设置", this::chooseQualityPreference);
+        settingRow("导出片库备份", "保存番剧、观看进度、置顶和设置；不含账号与视频文件。", "导出片库备份", this::exportBackupMenu);
+        settingRow("从备份恢复", "合并片库并保留本机较新进度；导入前可查看摘要。", "从备份恢复", this::importBackupMenu);
         settingRow("已移除番剧", store.listHiddenSeries().size() + " 部 · 点击恢复到首页", "已移除番剧", this::restoreHiddenSeriesMenu);
         long bytes = 0; int complete = 0;
         List<MediaRepository.OfflineItem> items = media.downloads();
@@ -492,6 +578,102 @@ public final class MainActivity extends Activity {
             .setMessage("不会清除番剧、置顶、下载、观看记录或登录状态。")
             .setNegativeButton("取消", null).setPositiveButton("恢复默认", (dialog, which) -> {
                 store.resetAppearanceAndPlaybackSettings(); applyTheme(); renderSettings();
+            }).show();
+    }
+
+    private String preferredQualityText() {
+        Models.Quality quality = store.getPreferredQuality();
+        return quality == null ? "尚未记录，播放时选择一次即可" : quality.label;
+    }
+
+    private void chooseQualityPreference() {
+        new AlertDialog.Builder(this).setTitle("画质偏好")
+            .setItems(new String[]{store.isRememberQuality() ? "关闭记忆" : "开启记忆", "清除已记住的画质"}, (dialog, which) -> {
+                if (which == 0) store.setRememberQuality(!store.isRememberQuality());
+                else store.clearPreferredQuality();
+                renderSettings();
+            }).setNegativeButton("取消", null).show();
+    }
+
+    private void exportBackupMenu() {
+        if (backupBusy) { notice("正在处理备份，请稍候"); return; }
+        closePlayback();
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("application/json").putExtra(Intent.EXTRA_TITLE, "番匣备份-"
+                + new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date()) + ".json");
+        try { startActivityForResult(intent, EXPORT_BACKUP); }
+        catch (Exception e) { error("无法选择备份位置", explain(e)); }
+    }
+
+    private void importBackupMenu() {
+        if (backupBusy) { notice("正在处理备份，请稍候"); return; }
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("*/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try { startActivityForResult(intent, IMPORT_BACKUP); }
+        catch (Exception e) { error("无法选择备份文件", explain(e)); }
+    }
+
+    private void handleBackupResult(int request, Uri uri) {
+        if (uri == null || backupBusy) return;
+        backupBusy = true;
+        if (request == EXPORT_BACKUP) {
+            runTask("正在写入备份…", () -> {
+                try {
+                    byte[] bytes = store.exportBackup().getBytes(StandardCharsets.UTF_8);
+                    try (OutputStream output = getContentResolver().openOutputStream(uri, "wt")) {
+                        if (output == null) throw new IOException("无法写入所选位置");
+                        output.write(bytes); output.flush();
+                    }
+                    return bytes.length;
+                } catch (Exception failure) {
+                    throw new BackupMessage("备份未能完成，请检查所选位置是否可写、设备空间是否充足。未完成的文件不能用于恢复。");
+                } finally { backupBusy = false; }
+            }, size -> notice("片库备份已保存 · " + android.text.format.Formatter.formatShortFileSize(this, size)));
+        } else {
+            runTask("正在检查备份…", () -> {
+                try {
+                    byte[] bytes;
+                    try (InputStream input = getContentResolver().openInputStream(uri)) {
+                        if (input == null) throw new IOException("无法读取所选文件");
+                        bytes = readBackupBytes(input);
+                    }
+                    String json = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
+                    try { return store.inspectBackup(json); }
+                    catch (IllegalArgumentException invalid) { throw new BackupMessage(invalid.getMessage()); }
+                } catch (BackupMessage message) { throw message; }
+                catch (Exception failure) {
+                    throw new BackupMessage("无法读取这份备份。请选择番匣导出的 JSON 文件，文件需小于 4 MB 且使用 UTF-8 编码。");
+                } finally { backupBusy = false; }
+            }, this::previewBackup);
+        }
+    }
+
+    static byte[] readBackupBytes(InputStream input) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] chunk = new byte[8192]; int count;
+        while ((count = input.read(chunk)) != -1) {
+            if (count == 0) continue;
+            if (bytes.size() + count > MAX_BACKUP_BYTES) throw new IOException("备份文件超过 4 MB，请选择番匣导出的 JSON 备份");
+            bytes.write(chunk, 0, count);
+        }
+        return bytes.toByteArray();
+    }
+
+    private void previewBackup(LibraryBackup.Snapshot snapshot) {
+        new AlertDialog.Builder(this).setTitle("恢复这份片库备份？")
+            .setMessage(snapshot.summary() + "\n\n合并番剧，保留本机较新的观看进度。备份中的置顶、移除、看完标记与设置将恢复。"
+                + "\n不会导入账号或视频文件，也不会删除现有下载。本地视频及其观看记录不会从备份恢复，需重新导入文件。")
+            .setNegativeButton("取消", null).setPositiveButton("恢复备份", (dialog, which) -> {
+                if (backupBusy) return;
+                closePlayback(); backupBusy = true;
+                runTask("正在恢复片库…", () -> {
+                    try { return store.importBackup(snapshot); }
+                    catch (IllegalArgumentException | IllegalStateException failure) { throw new BackupMessage(failure.getMessage()); }
+                    finally { backupBusy = false; }
+                }, result -> {
+                    applyTheme(); renderSettings();
+                    error("恢复完成", result.summary());
+                });
             }).show();
     }
 
@@ -658,15 +840,24 @@ public final class MainActivity extends Activity {
     private void loadQualities(Models.Episode episode) {
         int token = ++selectionToken;
         String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
-        runTask("正在获取实际可用清晰度…", token, () -> new BiliClient(cookie).qualities(episode), qualities -> {
+        runTask("正在获取实际可用清晰度…", token, () -> qualityResolver.load(episode, cookie), qualities -> {
             if (token != selectionToken) return;
             if (qualities.isEmpty()) { error("没有可播放格式", "当前账号或这集内容未返回可用视频源。请先检查 B站登录及播放权限。"); return; }
-            String[] names = new String[qualities.size()];
-            for (int i = 0; i < qualities.size(); i++) names[i] = qualities.get(i).label;
-            new AlertDialog.Builder(this).setTitle("第 " + episode.index + " 集 · 选择清晰度")
-                .setItems(names, (dialog, selected) -> { if (token == selectionToken) qualityAction(episode, qualities.get(selected), token); })
-                .setNegativeButton("取消", null).show();
+            showQualityChoices(episode, qualities, token);
         });
+    }
+
+    private void showQualityChoices(Models.Episode episode, List<Models.Quality> qualities, int token) {
+        List<Models.Quality> sorted = new ArrayList<>(qualities);
+        Models.Quality preference = store.isRememberQuality() ? store.getPreferredQuality() : null;
+        Models.Quality match = PlaybackPolicy.preferredQuality(sorted, preference);
+        if (match != null) { sorted.remove(match); sorted.add(0, match); }
+        String[] names = new String[sorted.size()];
+        for (int i = 0; i < sorted.size(); i++) names[i] = (sorted.get(i) == match ? "★ 已记住 · " : "") + sorted.get(i).label;
+        new AlertDialog.Builder(this).setTitle("第 " + episode.index + " 集 · "
+            + (preference != null && match == null ? "偏好画质不可用，请选择" : "选择清晰度"))
+            .setItems(names, (dialog, selected) -> { if (token == selectionToken) qualityAction(episode, sorted.get(selected), token); })
+            .setNegativeButton("取消", null).show();
     }
 
     private void qualityAction(Models.Episode episode, Models.Quality quality, int token) {
@@ -701,6 +892,7 @@ public final class MainActivity extends Activity {
 
     private void play(Models.Episode episode, Models.Quality quality, boolean offline, long resumeOverrideMs) {
         clearListSelection();
+        autoNextQueued = false;
         ++selectionToken; playerOverlay.setActive(false); savePosition(); sourceReady = false;
         if (player != null) { playerView.setPlayer(null); player.release(); player = null; }
         currentEpisode = episode; currentQuality = quality; currentOffline = offline;
@@ -731,8 +923,11 @@ public final class MainActivity extends Activity {
                 }
                 @Override public void onPlaybackStateChanged(int state) {
                     if (player != next) return;
-                    if (state == Player.STATE_READY) { sourceReady = true; applyZoom(); savePosition(); }
-                    if (state == Player.STATE_ENDED) { savePosition(); playerOverlay.showControls(); notice("本集已看完，可通过选集继续"); }
+                    if (state == Player.STATE_READY) {
+                        sourceReady = true; applyZoom(); savePosition();
+                        if (quality != null && store.isRememberQuality()) store.setPreferredQuality(quality);
+                    }
+                    if (state == Player.STATE_ENDED) { savePosition(); playerOverlay.showControls(); finishEpisode(next); }
                     playerOverlay.refresh();
                 }
             });
@@ -750,7 +945,59 @@ public final class MainActivity extends Activity {
                 content.removeAllViews();
                 title("正在播放", "点击上方「首页」可保存进度并返回番剧库");
             }
+            playbackNavigationToken = selectionToken;
         } catch (Exception e) { showPlaybackFailure(e); }
+    }
+
+    private void finishEpisode(ExoPlayer ended) {
+        if (dead || !resumed || ended != player || currentEpisode == null || !sourceReady || autoNextQueued) return;
+        if (!store.isAutoNext()) { notice("本集已看完，可通过选集继续"); return; }
+        if (selectionToken != playbackNavigationToken) return;
+        Models.Episode next = PlaybackPolicy.nextEpisode(findSeries(currentEpisode.seriesId), currentEpisode);
+        if (next == null) { notice("已经看完最后一集"); return; }
+        final int token = selectionToken;
+        final boolean offline = currentOffline;
+        final Models.Quality profile = continuationProfile();
+        autoNextQueued = true;
+        handler.post(() -> {
+            autoNextQueued = false;
+            if (dead || !resumed || player != ended || token != selectionToken || !store.isAutoNext()) return;
+            openContinuation(next, offline, profile);
+        });
+    }
+
+    private Models.Quality continuationProfile() {
+        Models.Quality preferred = store.isRememberQuality() ? store.getPreferredQuality() : null;
+        return preferred == null ? currentQuality : preferred;
+    }
+
+    private void openContinuation(Models.Episode episode, boolean offline, Models.Quality profile) {
+        final int token = ++selectionToken;
+        if (!downloadable(episode)) { play(episode, null, false); return; }
+        if (offline) {
+            List<Models.Quality> saved = downloadedQualities(episode.id);
+            Models.Quality matched = PlaybackPolicy.preferredQuality(saved, profile);
+            if (matched != null) { play(episode, matched, true); return; }
+            new AlertDialog.Builder(this).setTitle("离线连播已暂停")
+                .setMessage(saved.isEmpty() ? "下一集还没有完整下载。请下载后继续，或手动选择在线播放。"
+                    : "下一集没有下载相同画质。请选择其他已下载版本继续。")
+                .setPositiveButton(saved.isEmpty() ? "知道了" : "选择离线版本", (dialog, which) -> {
+                    if (!saved.isEmpty() && token == selectionToken) chooseOffline(episode);
+                }).show();
+            return;
+        }
+        String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
+        runTask("正在准备第 " + episode.index + " 集…", token, () -> qualityResolver.load(episode, cookie), choices -> {
+            if (!resumed || token != selectionToken) return;
+            Models.Quality matched = PlaybackPolicy.preferredQuality(choices, profile);
+            if (matched != null) { play(episode, matched, false); return; }
+            if (choices.isEmpty()) { error("下一集暂时无法播放", "没有获取到可用视频源，请检查登录、网络或权限。"); return; }
+            new AlertDialog.Builder(this).setTitle("请选择下一集画质")
+                .setMessage(profile == null ? "还没有可用的画质偏好，请先选择一次。" : "下一集没有返回相同清晰度与编码，已暂停连播。可手动选择其他版本。")
+                .setNegativeButton("取消", null).setPositiveButton("选择画质", (dialog, which) -> {
+                    if (token == selectionToken) showQualityChoices(episode, choices, token);
+                }).show();
+        });
     }
 
     private void showPlaybackFailure(Throwable cause) {
@@ -808,6 +1055,7 @@ public final class MainActivity extends Activity {
     }
 
     private void closePlayback() {
+        autoNextQueued = false;
         restoreWindowBrightness();
         cancelBatchDownloads();
         ++selectionToken;
@@ -841,21 +1089,26 @@ public final class MainActivity extends Activity {
         if (currentEpisode == null) return;
         Models.Series playingSeries = findSeries(currentEpisode.seriesId);
         if (playingSeries == null) return;
-        for (int i = 0; i < playingSeries.episodes.size(); i++) if (playingSeries.episodes.get(i).id.equals(currentEpisode.id)) {
+        List<Models.Episode> ordered = DownloadCatalogue.episodes(playingSeries.episodes);
+        for (int i = 0; i < ordered.size(); i++) if (ordered.get(i).id.equals(currentEpisode.id)) {
             int target = i + direction;
-            if (target < 0 || target >= playingSeries.episodes.size()) { notice(direction > 0 ? "已经是最后一集" : "已经是第一集"); return; }
-            selectEpisode(playingSeries.episodes.get(target)); return;
+            if (target < 0 || target >= ordered.size()) { notice(direction > 0 ? "已经是最后一集" : "已经是第一集"); return; }
+            openContinuation(ordered.get(target), currentOffline, continuationProfile()); return;
         }
     }
 
     private void togglePlayback() {
         if (player == null) return;
         if (player.getPlaybackState() == Player.STATE_ENDED) {
+            playbackNavigationToken = ++selectionToken; autoNextQueued = false;
             player.seekTo(0); player.play();
         } else if (player.getPlayerError() != null) {
             showPlaybackFailure(player.getPlayerError());
         } else if (player.getPlayWhenReady()) player.pause();
-        else player.play();
+        else {
+            playbackNavigationToken = ++selectionToken; autoNextQueued = false;
+            player.play();
+        }
         playerOverlay.refresh();
     }
 
@@ -1010,6 +1263,7 @@ public final class MainActivity extends Activity {
         super.onConfigurationChanged(configuration); playerOverlay.cancelInteraction(); resizeVideo(); root.requestApplyInsets();
     }
     @Override public void onBackPressed() {
+        if (playerOverlay.isLocked()) { playerOverlay.unlock(); return; }
         if (fullScreen) { setFullScreen(false); return; }
         if (episodeSelectionMode || downloadSelectionMode) { exitListSelection(); return; }
         if (downloadsPage && downloadGroupId != null) { downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0); return; }
@@ -1025,6 +1279,10 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == EXPORT_BACKUP || request == IMPORT_BACKUP) {
+            if (result == RESULT_OK && data != null) handleBackupResult(request, data.getData());
+            return;
+        }
         if (request != PICK_VIDEO || result != RESULT_OK || data == null) return;
         List<Uri> files = new ArrayList<>();
         ClipData clips = data.getClipData();
@@ -1086,6 +1344,7 @@ public final class MainActivity extends Activity {
         for (DownloadCatalogue.Group group : groups) if (group.id.equals(downloadGroupId)) selected = group;
         if (downloadGroupId == null) {
             title("离线下载", groups.size() + " 部番剧 · 完整下载后可断网播放");
+            addDownloadSummary(entries);
             if (entries.isEmpty()) {
                 empty("还没有下载任务", "进入一部番剧，点击「批量下载」，\n或为单集选择清晰度下载。", "去番剧库", this::renderLibrary);
                 return;
@@ -1118,6 +1377,7 @@ public final class MainActivity extends Activity {
                 clearListSelection(); downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0);
             }));
             title(selected == null ? downloadGroupTitle : selected.title, "按集数从小到大排列 · 同集可保留多个清晰度");
+            addDownloadSummary(selected == null ? new ArrayList<>() : selected.items);
             if (selected == null) {
                 empty("这部番剧暂时没有下载", "已删除的离线文件不会删除观看记录。", "查看全部下载",
                     () -> { downloadGroupId = null; renderDownloads(); scroll.scrollTo(0, 0); });
@@ -1127,6 +1387,23 @@ public final class MainActivity extends Activity {
             for (MediaRepository.OfflineItem entry : selected.items) renderDownloadItem(entry);
         }
         scroll.scrollTo(0, previousScroll);
+    }
+
+    private void addDownloadSummary(List<MediaRepository.OfflineItem> entries) {
+        int active = 0, waiting = 0, failed = 0; long speed = 0; boolean measured = false;
+        for (MediaRepository.OfflineItem entry : entries) {
+            if (entry.downloading) active++;
+            if (entry.queued || entry.waitingForNetwork) waiting++;
+            if (entry.failed) failed++;
+            if (entry.downloading && entry.bytesPerSecond >= 0) { speed += entry.bytesPerSecond; measured = true; }
+        }
+        long available = media.availableStorageBytes();
+        String summary = "设备可用空间 " + (available < 0 ? "暂不可读" : android.text.format.Formatter.formatShortFileSize(this, available));
+        if (!entries.isEmpty()) summary += "\n下载中 " + active + " · 等待 " + waiting + " · 失败 " + failed;
+        if (measured) summary += " · " + android.text.format.Formatter.formatShortFileSize(this, speed) + "/s";
+        if (available >= 0 && available < 200L * 1024 * 1024) summary += "\n可用空间较少，可删除不再需要的离线视频。";
+        TextView detail = text(summary, 12, MUTED); detail.setPadding(dp(4), 0, dp(4), dp(14));
+        detail.setContentDescription("下载状态摘要"); content.addView(detail);
     }
 
     private void addDownloadActions(List<MediaRepository.OfflineItem> visible) {
@@ -1152,8 +1429,18 @@ public final class MainActivity extends Activity {
         name.setTypeface(null, Typeface.BOLD); card.addView(name);
         card.addView(text(entry.quality.label + "  ·  " + entry.status, 12, AQUA));
         String size = android.text.format.Formatter.formatShortFileSize(this, entry.bytesDownloaded);
+        if (entry.totalBytes >= 0) size += " / " + android.text.format.Formatter.formatShortFileSize(this, entry.totalBytes);
+        else if (!entry.complete) size += " / 总大小待获取";
         if (entry.percent >= 0 && !entry.complete) size += String.format(Locale.CHINA, " · %.0f%%", entry.percent);
         card.addView(text(size, 12, MUTED));
+        if (entry.downloading) {
+            String speed = entry.bytesPerSecond < 0 ? "正在测量速度…" : android.text.format.Formatter.formatShortFileSize(this, entry.bytesPerSecond) + "/s";
+            if (entry.estimatedRemainingSeconds >= 0) {
+                long seconds = entry.estimatedRemainingSeconds;
+                speed += " · 预计剩余 " + (seconds < 60 ? seconds + " 秒" : (seconds + 59) / 60 + " 分钟");
+            }
+            card.addView(text(speed, 12, MUTED));
+        }
         if (downloadSelectionMode) {
             boolean checked = selectedDownloadKeys.contains(entry.key);
             markSelection(card, checked);
@@ -1466,13 +1753,20 @@ public final class MainActivity extends Activity {
     private int dp(float value) { return Math.round(getResources().getDisplayMetrics().density * value); }
     private void notice(String message) { if (!dead) Toast.makeText(this, message, Toast.LENGTH_SHORT).show(); }
     private void error(String title, String message) { if (!dead && !isFinishing()) new AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("知道了", null).show(); }
-    private static String explain(Exception exception) { return MediaErrors.describe(exception); }
+    private static String explain(Exception exception) {
+        if (exception instanceof BackupMessage) return exception.getMessage();
+        if (exception instanceof DownloadStatus.StorageException) return exception.getMessage();
+        return MediaErrors.describe(exception);
+    }
     private static Models.Episode findEpisode(Models.Series series, String id) { if (id == null) return null; for (Models.Episode episode : series.episodes) if (id.equals(episode.id)) return episode; return null; }
     private static String speedText(float rate) { return String.format(Locale.ROOT, "%s×", rate); }
     private static String time(long milliseconds) { long total = Math.max(0, milliseconds) / 1000; return total >= 3600 ? String.format(Locale.ROOT, "%d:%02d:%02d", total / 3600, total / 60 % 60, total % 60) : String.format(Locale.ROOT, "%02d:%02d", total / 60, total % 60); }
 
     @Override protected void onResume() {
         super.onResume();
+        resumed = true;
+        if (resumeNavigation && player != null) playbackNavigationToken = selectionToken;
+        resumeNavigation = false;
         applyPlaybackBrightness();
         applySystemBars();
         if (playerOverlay != null && player != null) playerOverlay.setActive(true);
@@ -1483,6 +1777,8 @@ public final class MainActivity extends Activity {
         else if (playerOverlay != null) playerOverlay.cancelInteraction();
     }
     @Override protected void onPause() {
+        resumeNavigation = player != null && selectionToken == playbackNavigationToken;
+        resumed = false; autoNextQueued = false; ++selectionToken;
         cancelBatchDownloads();
         if (playerOverlay != null) playerOverlay.setActive(false);
         restoreWindowBrightness();
@@ -1491,6 +1787,8 @@ public final class MainActivity extends Activity {
     @Override protected void onDestroy() {
         cancelBatchDownloads();
         savePosition(); playerOverlay.dispose(); dead = true; ++selectionToken; handler.removeCallbacksAndMessages(null); io.shutdownNow();
+        if (coverLoader != null) coverLoader.close();
+        coverMetadata.shutdownNow();
         if (player != null) { playerView.setPlayer(null); player.release(); player = null; }
         super.onDestroy();
     }
