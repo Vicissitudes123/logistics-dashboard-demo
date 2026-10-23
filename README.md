@@ -2,9 +2,9 @@
 
 原生安卓测试版，Android 8.0（API 26）及以上。中文界面，视频、账号会话和观看记录保存在设备本地，不需要部署服务器。
 
-[下载 0.1.7 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/de2ebd74ddbc8e07a47a3754c3628598edee20ac/downloads/anime-shelf-0.1.7-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/de2ebd74ddbc8e07a47a3754c3628598edee20ac/downloads/anime-shelf-0.1.7.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
+[下载 0.1.8 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/2fea4c04e45513828886dbebd1e4c3c3f498e754/downloads/anime-shelf-0.1.8-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/2fea4c04e45513828886dbebd1e4c3c3f498e754/downloads/anime-shelf-0.1.8.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
 
-**当前交付为 0.1.7。** 新增元数据备份、下载状态、播放器锁定、画质偏好与自动连播，以及首页封面和看完标记。132 项解析断言与 191 项 JUnit/Robolectric 测试通过，构建、签名及公开下载文件已核对；详情见 `BUILD_STATUS.md`。实际手机操作仍需安装后确认。
+**当前交付为 0.1.8。** 新增应用内检查更新、默认仅 Wi-Fi 下载、按番剧设置跳过片头片尾，以及首页筛选。132 项解析断言与 245 项 JUnit/Robolectric 测试通过，构建、签名、公开下载文件及在线更新清单已核对；详情见 `BUILD_STATUS.md`。实际手机网络切换和播放仍需安装后确认。
 
 ## 0.1.8 更新、下载网络与追番筛选
 
