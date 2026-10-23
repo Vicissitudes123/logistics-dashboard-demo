@@ -187,6 +187,9 @@ public class MainEnhancementTest {
     @Test public void skipEditorStartsDisabledRejectsOutOfRangeAndSavesOnlyThisSeries() throws Exception {
         invoke("renderSeriesContent", new Class<?>[]{Models.Series.class}, recent);
         clickDescription("剧集片头片尾设置");
+        // Dialog.show posts onShow, which installs the validation click listener.
+        // A user cannot tap the displayed button before that UI message is dispatched.
+        idle();
         View form = showingDialog().getWindow().getDecorView();
         Switch enabled = (Switch) description(form, "启用本番自动跳过");
         EditText intro = (EditText) description(form, "片头秒数");
@@ -261,12 +264,21 @@ public class MainEnhancementTest {
         controller.resume(); idle();
         assertFalse("Returning to the app does not start paused playback", playback.playWhenReady);
         playback.playWhenReady = true;
+        long countdownStartedAt = android.os.SystemClock.elapsedRealtime();
         invoke("updateSkipPlayback");
         assertTrue(((TextView) get("skipNoticeText")).getText().toString().contains("5 秒"));
         Shadows.shadowOf(Looper.getMainLooper()).idleFor(4, TimeUnit.SECONDS);
         assertEquals(0, playback.seeks);
-        Shadows.shadowOf(Looper.getMainLooper()).idleFor(1, TimeUnit.SECONDS);
-        assertEquals(1, playback.seeks);
+        // The main loop polls every 500 ms; the explicit update above can start between ticks.
+        // Keep the complete five-second window, then allow only the next scheduled poll.
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(1500, TimeUnit.MILLISECONDS);
+        assertEquals("Countdown should finish by the next poll; elapsed="
+            + (android.os.SystemClock.elapsedRealtime() - countdownStartedAt) + ", notice="
+            + ((TextView) get("skipNoticeText")).getText() + ", resumed=" + get("resumed")
+            + ", navigation=" + get("selectionToken") + "/" + get("playbackNavigationToken"), 1, playback.seeks);
+        long windowMs = playback.lastSeekElapsedMs - countdownStartedAt;
+        assertTrue("Cancellation window must last at least five seconds: " + windowMs, windowMs >= 5000);
+        assertTrue("Skip must run by the next 500 ms poll: " + windowMs, windowMs <= 5500);
         assertEquals(300000, playback.position);
         assertTrue(store.getProgress(recent.episodes.get(0).id).completed);
         invoke("updateSkipPlayback");
@@ -384,6 +396,7 @@ public class MainEnhancementTest {
     private static final class FakePlayback {
         final ExoPlayer player;
         long position;
+        long lastSeekElapsedMs = -1;
         int seeks;
         boolean playWhenReady = true;
         FakePlayback(long initialPosition) {
@@ -400,7 +413,9 @@ public class MainEnhancementTest {
                         case "isCurrentMediaItemSeekable": return true;
                         case "pause": playWhenReady = false; return null;
                         case "play": playWhenReady = true; return null;
-                        case "seekTo": position = ((Number) arguments[arguments.length - 1]).longValue(); seeks++; return null;
+                        case "seekTo":
+                            position = ((Number) arguments[arguments.length - 1]).longValue();
+                            lastSeekElapsedMs = android.os.SystemClock.elapsedRealtime(); seeks++; return null;
                         case "hashCode": return System.identityHashCode(proxy);
                         case "equals": return proxy == arguments[0];
                     }
