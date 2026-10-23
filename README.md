@@ -2,9 +2,9 @@
 
 原生安卓测试版，Android 8.0（API 26）及以上。中文界面，视频、账号会话和观看记录保存在设备本地，不需要部署服务器。
 
-[下载 0.1.6 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/c1c2570d311b7cc8550dd6210dc413851322e9c1/downloads/anime-shelf-0.1.6-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/c1c2570d311b7cc8550dd6210dc413851322e9c1/downloads/anime-shelf-0.1.6.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
+[下载 0.1.7 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/de2ebd74ddbc8e07a47a3754c3628598edee20ac/downloads/anime-shelf-0.1.7-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/de2ebd74ddbc8e07a47a3754c3628598edee20ac/downloads/anime-shelf-0.1.7.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
 
-**0.1.7 正在构建验证；以上下载链接仍为已发布的 0.1.6。** 新增元数据备份、下载状态、播放器锁定、画质偏好与自动连播，以及首页封面和看完标记，详情见 `BUILD_STATUS.md`。
+**当前交付为 0.1.7。** 新增元数据备份、下载状态、播放器锁定、画质偏好与自动连播，以及首页封面和看完标记。132 项解析断言与 191 项 JUnit/Robolectric 测试通过，构建、签名及公开下载文件已核对；详情见 `BUILD_STATUS.md`。实际手机操作仍需安装后确认。
 
 ## 固定存档
 
