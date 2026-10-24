@@ -1,20 +1,21 @@
 {
   "schemaVersion": 1,
-  "versionCode": 9,
-  "versionName": "0.1.8",
+  "versionCode": 10,
+  "versionName": "0.1.9",
   "packageName": "com.animeshelf.app",
   "minSdk": 26,
-  "apkUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.8.apk",
-  "zipUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.8-install.zip",
-  "apkSha256": "3858b58733e3f9cca1fa69e17592c43f6e77d608b3618b1a2cc139990dda5cb5",
-  "zipSha256": "f82786c898be68ad767b8553a15b41f4f39a2f3b2897a91e7ad7b0a115d806ba",
-  "apkBytes": 5021705,
-  "zipBytes": 5021845,
+  "apkUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.9.apk",
+  "zipUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.9-install.zip",
+  "apkSha256": "980f337bbd456b42fe0b89252018473969b3313fedf3d16d67173435ce146875",
+  "zipSha256": "4bb7a62835eb2f8a4da6421af6f18ac97dae2b500977c47730aeede394ff0c37",
+  "apkBytes": 5042461,
+  "zipBytes": 5042601,
   "notes": [
-    "新增应用内手动检查更新。",
-    "仅 Wi-Fi 下载默认开启，允许移动网络下载前会再次确认。",
-    "每部番剧可分别设置跳过片头片尾，默认关闭，本集可暂时取消。",
-    "首页新增全部、未看完、已看完、有离线视频筛选，可结合搜索。"
+    "播放器锁定与解锁按钮统一固定在左侧。",
+    "新增上一集、下一集与清晰度快捷入口。",
+    "切换剧集沿用本番上次的画质及在线或离线播放方式。",
+    "拖动进度时显示画面缩略预览；视频源不支持时保留时间提示。",
+    "首页改为大封面最近观看与海报片库，统一搜索、筛选和导航样式。"
   ],
-  "sourceCommit": "f3493c20cb4fa5446bd4b4fee6550a1de35d5382"
+  "sourceCommit": "3e4fd5901b607d5d603f2e194738faed98dab6d6"
 }
