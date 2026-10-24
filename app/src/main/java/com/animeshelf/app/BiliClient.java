@@ -336,6 +336,11 @@ public final class BiliClient {
                     quality.width = Math.max(0, video.optInt("width", 0));
                     quality.height = Math.max(0, video.optInt("height", 0));
                     quality.bandwidth = Math.max(0, video.optLong("bandwidth", 0));
+                    quality.audioBandwidth = Math.max(0, audio.optLong("bandwidth", 0));
+                    quality.durationMs = Math.max(0, info.optLong("timelength", 0));
+                    if (quality.durationMs == 0) quality.durationMs = Math.max(0, Math.round(dash.optDouble("duration", 0) * 1000));
+                    quality.videoBytes = Math.max(0, video.optLong("size", 0));
+                    quality.audioBytes = Math.max(0, audio.optLong("size", 0));
                     quality.codecs = video.optString("codecs", "");
                     quality.id = qn + ":" + codec + ":" + audioId;
                     Quality existing = seen.get(quality.id);
@@ -374,6 +379,8 @@ public final class BiliClient {
                     Quality quality = new Quality();
                     quality.qn = info.optInt("quality", 0);
                     quality.id = quality.qn + ":progressive:0";
+                    quality.videoBytes = Math.max(0, file.optLong("size", 0));
+                    quality.durationMs = Math.max(0, file.optLong("length", info.optLong("timelength", 0)));
                     quality.label = nonEmpty(labels.get(quality.qn), resolutionLabel(quality.qn, 0)) + " · 原始文件";
                     quality.videoUrls = urls;
                     quality.videoUrl = urls.get(0);

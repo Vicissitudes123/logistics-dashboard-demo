@@ -81,10 +81,12 @@ public class PlayerControlsLayoutTest {
     @Test @Config(qualifiers = "w360dp-h800dp-port-mdpi")
     public void portraitPlayerKeepsAllControlsInsideItsShortViewport() throws Exception {
         overlay.setFullScreen(false); layout(360, 220);
-        assertControlsFit("上一集", "暂停", "下一集", "播放速度", "选集", "显示方式", "清晰度", "全屏",
+        assertControlsFit("上一集", "暂停", "下一集", "更多播放设置", "清晰度", "全屏",
             "返回", "回到首页", "播放进度");
-        Rect play = bounds(find("暂停")), speed = bounds(find("播放速度"));
-        assertFalse("Compact controls wrap to separate rows", verticalOverlap(play, speed));
+        Rect play = bounds(find("暂停"));
+        assertTrue("Compact action row stays at the bottom", play.top >= dp(220 - 48));
+        assertNull(find("播放速度")); assertNull(find("选集")); assertNull(find("显示方式"));
+        assertTrue("Progress remains immediately above the bottom actions", bounds(find("播放进度")).top >= dp(220 - 96));
         assertEquals(View.GONE, find("锁定播放器").getVisibility());
         savePreview("player-portrait.png");
     }

@@ -116,6 +116,8 @@ public final class Models {
         /** Stream metadata reported by the API; zero/empty means unavailable in old records. */
         public int width, height;
         public long bandwidth;
+        /** Optional sizing metadata. Zero means unavailable, never a zero-byte episode. */
+        public long durationMs, audioBandwidth, videoBytes, audioBytes;
         public String codecs = "";
         public String videoUrl = "";
         /** Empty for a single file that already contains both audio and video. */
@@ -138,6 +140,8 @@ public final class Models {
             List<String> audios = audioCandidates();
             return new JSONObject().put("id", id).put("label", label).put("qn", qn)
                     .put("width", width).put("height", height).put("bandwidth", bandwidth).put("codecs", codecs)
+                    .put("durationMs", durationMs).put("audioBandwidth", audioBandwidth)
+                    .put("videoBytes", videoBytes).put("audioBytes", audioBytes)
                     .put("videoUrl", first(videos)).put("audioUrl", first(audios))
                     .put("videoUrls", new JSONArray(videos)).put("audioUrls", new JSONArray(audios))
                     .put("headers", headerJson);
@@ -152,6 +156,10 @@ public final class Models {
             quality.width = Math.max(0, json.optInt("width", 0));
             quality.height = Math.max(0, json.optInt("height", 0));
             quality.bandwidth = Math.max(0, json.optLong("bandwidth", 0));
+            quality.durationMs = Math.max(0, json.optLong("durationMs", 0));
+            quality.audioBandwidth = Math.max(0, json.optLong("audioBandwidth", 0));
+            quality.videoBytes = Math.max(0, json.optLong("videoBytes", 0));
+            quality.audioBytes = Math.max(0, json.optLong("audioBytes", 0));
             quality.codecs = json.optString("codecs", "");
             quality.videoUrl = json.optString("videoUrl", "");
             quality.audioUrl = json.optString("audioUrl", "");

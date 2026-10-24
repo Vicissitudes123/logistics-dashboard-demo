@@ -38,7 +38,7 @@ public final class CoverLoader implements AutoCloseable {
     static final int MAX_IMAGE_BYTES = 2 * 1024 * 1024;
     static final long MAX_DISK_BYTES = 16L * 1024 * 1024;
     static final int MAX_DISK_FILES = 64;
-    private static final int MAX_EDGE = 512;
+    private static final int MAX_EDGE = 1536;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final File directory;
     private final ExecutorService workers;
@@ -47,7 +47,7 @@ public final class CoverLoader implements AutoCloseable {
     private final Map<ImageView, Object> bindings = new WeakHashMap<>();
     private final LinkedHashSet<String> failed = new LinkedHashSet<>();
     private final Set<HttpURLConnection> activeConnections = new HashSet<>();
-    private final LruCache<String, Bitmap> memory = new LruCache<String, Bitmap>(4 * 1024 * 1024) {
+    private final LruCache<String, Bitmap> memory = new LruCache<String, Bitmap>(12 * 1024 * 1024) {
         @Override protected int sizeOf(String key, Bitmap value) { return value.getAllocationByteCount(); }
     };
     private volatile boolean closed;
@@ -79,7 +79,7 @@ public final class CoverLoader implements AutoCloseable {
     public void load(ImageView view, String address) {
         requireMainThread();
         if (view == null) return;
-        String url = Models.safeCoverUrl(address);
+        String url = originalArtworkUrl(address);
         Object token = new Object();
         synchronized (this) {
             bindings.put(view, token);
@@ -106,6 +106,13 @@ public final class CoverLoader implements AutoCloseable {
                 if (!closed) main.post(() -> deliver(url, pending, bitmap));
             });
         }
+    }
+
+    /** Only remove the validated public image CDN's resize suffix, never signed URL parameters. */
+    static String originalArtworkUrl(String address) {
+        String safe = Models.safeCoverUrl(address);
+        int suffix = safe.indexOf('@');
+        return suffix < 0 ? safe : safe.substring(0, suffix);
     }
 
     /** Revoke a reused/removed view's pending result without touching its click listeners. */

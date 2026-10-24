@@ -91,6 +91,26 @@ public class MainSelectionTest {
         assertNoDialog();
     }
 
+    @Test @Config(qualifiers = "w360dp-h800dp-port-mdpi")
+    public void scrollingFarDownKeepsTheDownloadActionVisibleOutsideTheList() throws Exception {
+        for (int i = 11; i <= 40; i++) series.episodes.add(episode(series, "episode-" + i, i));
+        store.saveSeries(series); openSeries(series);
+        episodeCard(tenth).performLongClick();
+        View root = (View) get("root");
+        root.measure(View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY));
+        root.layout(0, 0, 360, 800);
+        android.widget.ScrollView scroll = (android.widget.ScrollView) get("scroll"); scroll.scrollTo(0, 10000);
+        Button download = button("下载 1 集");
+        assertSame(get("selectionBar"), download.getParent().getParent());
+        android.graphics.Rect bounds = new android.graphics.Rect(0, 0, download.getWidth(), download.getHeight());
+        ((ViewGroup) root).offsetDescendantRectToMyCoords(download, bounds);
+        assertTrue(bounds.bottom <= 800 && bounds.top >= 650 && bounds.height() >= 48);
+        assertEquals(View.GONE, ((View) get("nav")).getVisibility());
+        assertTrue(button("取消").performClick());
+        assertEquals(View.GONE, ((View) get("selectionBar")).getVisibility());
+        assertEquals(View.VISIBLE, ((View) get("nav")).getVisibility());
+    }
+
     @Test public void episodeSelectAllAndCancelStayInsideTheEpisodeList() throws Exception {
         openSeries(series);
         assertTrue(episodeCard(first).performLongClick());

@@ -54,6 +54,7 @@ public final class PlayerOverlay extends FrameLayout {
         void chooseSpeed();
         void chooseEpisode();
         void chooseDisplay();
+        default void chooseMore() { }
         void back();
         void home();
         void toggleFullScreen();
@@ -76,7 +77,7 @@ public final class PlayerOverlay extends FrameLayout {
     private final TextView title, subtitle, position, duration, feedback;
     private final TextView seekPreviewTime;
     private final ImageView seekPreviewImage;
-    private final ImageButton playButton, fullButton, lockButton, unlockButton, previousButton, nextButton;
+    private final ImageButton playButton, fullButton, lockButton, unlockButton, previousButton, nextButton, moreButton;
     private final Button speedButton, episodeButton, displayButton, qualityButton;
     private final SeekBar seekBar;
     private boolean active, controlsVisible = true, fullScreen, scrubbing, scrubCanceled, touchAccepted, multiTouch, wasPlaying;
@@ -164,6 +165,7 @@ public final class PlayerOverlay extends FrameLayout {
         episodeButton = label("选集", "选集", host::chooseEpisode);
         displayButton = label("画面", "显示方式", host::chooseDisplay);
         qualityButton = label("清晰度", "清晰度", host::chooseQuality);
+        moreButton = icon("更多播放设置", Glyph.MORE, host::chooseMore);
         fullButton = icon("全屏", Glyph.FULL, host::toggleFullScreen);
         bottomBar.addView(extraActions);
         bottomBar.addView(actions);
@@ -260,18 +262,14 @@ public final class PlayerOverlay extends FrameLayout {
         actions.removeAllViews(); extraActions.removeAllViews(); bottomBar.removeAllViews();
         action(actions, previousButton, 48); action(actions, playButton, 48); action(actions, nextButton, 48);
         actions.addView(new View(getContext()), new LinearLayout.LayoutParams(0, 1, 1));
-        if (compact) {
-            action(extraActions, speedButton, 72); action(extraActions, episodeButton, 64); action(extraActions, displayButton, 64);
-        } else {
+        if (!compact) {
             action(actions, episodeButton, 56); action(actions, speedButton, 64); action(actions, displayButton, 56);
         }
-        action(actions, qualityButton, 80); action(actions, fullButton, 48);
-        extraActions.setVisibility(compact ? VISIBLE : GONE);
-        if (compact) {
-            bottomBar.addView(extraActions); bottomBar.addView(actions); bottomBar.addView(timeline);
-        } else {
-            bottomBar.addView(timeline); bottomBar.addView(extraActions); bottomBar.addView(actions);
-        }
+        action(actions, qualityButton, compact ? 64 : 80);
+        if (compact) action(actions, moreButton, 48);
+        action(actions, fullButton, 48);
+        extraActions.setVisibility(GONE);
+        bottomBar.addView(timeline); bottomBar.addView(actions);
     }
 
     private void action(LinearLayout row, View view, int width) {
@@ -366,7 +364,7 @@ public final class PlayerOverlay extends FrameLayout {
     public void showControls() {
         if (locked) { hideControls(); return; }
         controlsVisible = true; topBar.setVisibility(VISIBLE); bottomBar.setVisibility(VISIBLE);
-        actions.setVisibility(VISIBLE); extraActions.setVisibility(compactActions ? VISIBLE : GONE);
+        actions.setVisibility(VISIBLE); extraActions.setVisibility(GONE);
         updateLockControls();
         scheduleHide();
     }
@@ -506,7 +504,7 @@ public final class PlayerOverlay extends FrameLayout {
         seekPreviewTime.setText(time(target) + " / " + time(host.durationMs()));
         seekPreview.setVisibility(VISIBLE);
         topBar.setVisibility(INVISIBLE); actions.setVisibility(INVISIBLE);
-        extraActions.setVisibility(compactActions ? INVISIBLE : GONE);
+        extraActions.setVisibility(GONE);
         bottomBar.setVisibility(VISIBLE); lockButton.setVisibility(GONE);
         seekBar.setProgress((int) Math.max(0, Math.min(1000, Math.round(target * 1000d / host.durationMs()))));
         if (target == requestedPreviewPosition) return;
@@ -535,7 +533,7 @@ public final class PlayerOverlay extends FrameLayout {
         seekPreview.setVisibility(GONE); seekPreviewImage.setImageDrawable(null); seekPreviewImage.setVisibility(GONE);
         topBar.setVisibility(controlsVisible && !locked ? VISIBLE : GONE);
         bottomBar.setVisibility(controlsVisible && !locked ? VISIBLE : GONE);
-        actions.setVisibility(VISIBLE); extraActions.setVisibility(compactActions ? VISIBLE : GONE);
+        actions.setVisibility(VISIBLE); extraActions.setVisibility(GONE);
         updateLockControls();
     }
 
@@ -589,7 +587,7 @@ public final class PlayerOverlay extends FrameLayout {
             : String.format(Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
     }
 
-    private enum Glyph { PLAY, PAUSE, PREVIOUS, NEXT, BACK, HOME, FULL, EXIT_FULL, LOCK, UNLOCK }
+    private enum Glyph { PLAY, PAUSE, PREVIOUS, NEXT, BACK, HOME, FULL, EXIT_FULL, LOCK, UNLOCK, MORE }
     private static final class ControlIcon extends Drawable {
         private final Glyph glyph;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -606,6 +604,10 @@ public final class PlayerOverlay extends FrameLayout {
             paint.setStyle(Paint.Style.STROKE);
             Path path = new Path();
             switch (glyph) {
+                case MORE:
+                    paint.setStyle(Paint.Style.FILL);
+                    canvas.drawCircle(5, 12, 1.8f, paint); canvas.drawCircle(12, 12, 1.8f, paint);
+                    canvas.drawCircle(19, 12, 1.8f, paint); break;
                 case PLAY: paint.setStyle(Paint.Style.FILL); path.moveTo(6, 2); path.lineTo(22, 12); path.lineTo(6, 22); path.close(); break;
                 case PAUSE: paint.setStyle(Paint.Style.FILL); canvas.drawRoundRect(5, 2, 10, 22, 1, 1, paint); canvas.drawRoundRect(14, 2, 19, 22, 1, 1, paint); break;
                 case PREVIOUS:

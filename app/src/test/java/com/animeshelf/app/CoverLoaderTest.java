@@ -73,7 +73,7 @@ public class CoverLoaderTest {
         runAll();
         assertEquals(1, opened.size());
         Bitmap bitmap = ((BitmapDrawable) first.getDrawable()).getBitmap();
-        assertTrue(bitmap.getWidth() <= 512 && bitmap.getHeight() <= 512);
+        assertEquals(1200, bitmap.getWidth()); assertEquals(600, bitmap.getHeight());
         assertSame(bitmap, ((BitmapDrawable) second.getDrawable()).getBitmap());
         ImageView third = new ImageView(context);
         loader.load(third, FIRST);
@@ -84,6 +84,27 @@ public class CoverLoaderTest {
         assertNull(opened.get(0).getRequestProperty("Cookie"));
         assertNull(opened.get(0).getRequestProperty("Authorization"));
         assertFalse(opened.get(0).getInstanceFollowRedirects());
+    }
+
+    @Test public void posterRetainsEnoughPixelsAndRemovesOnlyThePublicResizeSuffix() throws Exception {
+        picture = png(600, 900);
+        ImageView view = new ImageView(context);
+        loader.load(view, FIRST + "@160w_240h_1c.webp"); runAll();
+        assertEquals(FIRST, opened.get(0).getURL().toString());
+        Bitmap bitmap = ((BitmapDrawable) view.getDrawable()).getBitmap();
+        assertEquals(600, bitmap.getWidth()); assertEquals(900, bitmap.getHeight());
+        create(url -> { throw new IOException("offline"); });
+        loader.load(view, FIRST + "@160w_240h_1c.webp"); runAll();
+        assertEquals(600, ((BitmapDrawable) view.getDrawable()).getBitmap().getWidth());
+        assertTrue(opened.isEmpty());
+        assertEquals("", CoverLoader.originalArtworkUrl(FIRST + "?token=secret"));
+    }
+
+    @Test public void exceptionallyLargeArtworkStillHasABoundedDecodedBitmap() throws Exception {
+        picture = png(4096, 2048);
+        ImageView view = new ImageView(context); loader.load(view, FIRST); runAll();
+        Bitmap bitmap = ((BitmapDrawable) view.getDrawable()).getBitmap();
+        assertEquals(1024, bitmap.getWidth()); assertEquals(512, bitmap.getHeight());
     }
 
     @Test public void staleResultsDoNotOverwriteANewerBindingOrAClearedView() throws Exception {

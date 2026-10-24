@@ -350,7 +350,9 @@ public class PlayerOverlayTest {
             layout(size[0], size[1]);
             overlay.showControls();
             layout(size[0], size[1]);
-            String[] buttons = {"返回", "回到首页", "暂停", "播放速度", "选集", "显示方式", "全屏"};
+            String[] buttons = size[0] < 500
+                ? new String[]{"返回", "回到首页", "暂停", "上一集", "下一集", "清晰度", "更多播放设置", "全屏"}
+                : new String[]{"返回", "回到首页", "暂停", "播放速度", "选集", "显示方式", "全屏"};
             for (String description : buttons) {
                 View button = find(description);
                 Rect rectangle = bounds(button);

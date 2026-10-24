@@ -138,30 +138,28 @@ public class MainPlaybackContinuityTest {
         assertFalse(dialogShowing());
     }
 
-    @Test public void savedOnlineModeRemainsOnlineEvenWhenTheEpisodeIsAlsoDownloaded() throws Exception {
+    @Test public void completedDownloadTakesPriorityOverSavedOnlineModeWithoutARequest() throws Exception {
         Models.Episode episode = series.episodes.get(0);
         saveDownloaded(episode, profile, true);
         store.setSeriesPlaybackPreference(series.id, false, profile);
         resolver((selected, cookie) -> { resolveCalls.incrementAndGet(); return Collections.singletonList(profile); });
         invoke("selectEpisode", new Class<?>[]{Models.Episode.class}, episode); drainWorker();
 
-        assertEquals(1, resolveCalls.get());
+        assertEquals(0, resolveCalls.get());
         assertEquals(1, created.size());
-        assertFalse((Boolean) get("currentOffline"));
+        assertTrue((Boolean) get("currentOffline"));
         assertFalse(dialogShowing());
     }
 
-    @Test public void missingOfflineProfileRequiresExplicitChoiceAndNeverFallsBackToNetwork() throws Exception {
+    @Test public void missingOfflineProfileUsesAnAvailableDownloadedVersionWithoutNetwork() throws Exception {
         Models.Episode episode = series.episodes.get(1);
         Models.Quality lower = quality(64, "7");
         saveDownloaded(episode, lower, true);
         store.setSeriesPlaybackPreference(series.id, true, profile);
         invoke("selectEpisode", new Class<?>[]{Models.Episode.class}, episode);
 
-        assertTrue(created.isEmpty());
+        assertFalse(dialogShowing());
         assertEquals(0, resolveCalls.get());
-        assertTrue(dialogText().contains("相同画质"));
-        clickDialog(AlertDialog.BUTTON_POSITIVE);
         assertEquals(1, created.size());
         assertProfile(lower, (Models.Quality) get("currentQuality"));
         assertTrue((Boolean) get("currentOffline"));
@@ -317,6 +315,66 @@ public class MainPlaybackContinuityTest {
         current.ready(); invoke("updateSkipPlayback");
         assertEquals(90000, current.position);
         assertEquals(1, created.size()); assertEquals(0, resolveCalls.get());
+    }
+
+    @Test public void offlinePagesShowPersistentRecentEpisodeAndIndividualProgressWithoutResolving() throws Exception {
+        Models.Episode first = series.episodes.get(0), second = series.episodes.get(1);
+        saveDownloaded(first, profile, true); saveDownloaded(second, profile, true);
+        store.saveProgress(first, 917000, 1439000); store.saveProgress(second, 492000, 1439000);
+        resolver((ep, cookie) -> { throw new AssertionError("Offline history must not resolve network media"); });
+        invoke("openDownloads");
+        assertTrue(text((View) get("content")).contains("最近观看：第 2 集 · 08:12"));
+        set("downloadGroupId", series.id); invoke("renderDownloads");
+        assertTrue(text((View) get("content")).contains("看到 15:17 / 23:59"));
+        assertTrue(text((View) get("content")).contains("看到 08:12 / 23:59"));
+        clickDescription("离线继续观看：" + series.id);
+        assertTrue((Boolean) get("currentOffline")); assertEquals(second.id, ((Models.Episode) get("currentEpisode")).id);
+        assertEquals(492000, currentFake().position); assertEquals(0, resolveCalls.get());
+    }
+
+    @Test public void newestOnlineHistoryIsStillVisibleWhenOnlyEarlierEpisodesAreDownloaded() throws Exception {
+        Models.Episode first = series.episodes.get(0), second = series.episodes.get(1);
+        saveDownloaded(first, profile, true); store.saveProgress(first, 13000, 300000); store.saveProgress(second, 25000, 300000);
+        invoke("openDownloads"); set("downloadGroupId", series.id); invoke("renderDownloads");
+        assertTrue(text((View) get("content")).contains("最近观看：第 2 集 · 00:25（本集未下载）"));
+        clickDescription("离线继续观看：" + series.id);
+        assertEquals(first.id, ((Models.Episode) get("currentEpisode")).id);
+        assertEquals(13000, currentFake().position); assertTrue((Boolean) get("currentOffline"));
+        assertEquals(0, resolveCalls.get());
+    }
+
+    @Test public void downloadedNextEpisodeAlsoOverridesOnlineAutoContinuation() throws Exception {
+        Models.Episode second = series.episodes.get(1); saveDownloaded(second, profile, true);
+        FakePlayer first = start(0, profile, false); first.ready(); store.setAutoNext(true);
+        first.state = Player.STATE_ENDED;
+        invoke("finishEpisode", new Class<?>[]{ExoPlayer.class}, first.player); idle();
+        assertEquals(second.id, ((Models.Episode) get("currentEpisode")).id);
+        assertTrue((Boolean) get("currentOffline")); assertEquals(0, resolveCalls.get());
+    }
+
+    @Test public void compactMenuKeepsSpeedEpisodeAndDisplayReachable() throws Exception {
+        start(0, profile, false).ready();
+        invoke("showCompactPlaybackMenu");
+        assertEquals(3, showingDialog().getListView().getAdapter().getCount());
+        chooseItem(1);
+        assertEquals(series.episodes.size(), showingDialog().getListView().getAdapter().getCount());
+    }
+
+    @Test public void singleDownloadShowsStorageBeforeEnqueueAndCancelLeavesNoTask() throws Exception {
+        profile.videoBytes = 120000000; profile.audioBytes = 4000000;
+        invoke("prepareDownloads", new Class<?>[]{java.util.List.class, Models.Quality.class}, Collections.singletonList(series.episodes.get(0)), profile);
+        drainWorker();
+        assertTrue(dialogText().contains("设备可用")); assertTrue(dialogText().contains("第 1 集"));
+        assertTrue(dialogText().contains("124")); assertTrue(repository.downloads().isEmpty());
+        clickDialog(AlertDialog.BUTTON_NEGATIVE); assertTrue(repository.downloads().isEmpty());
+    }
+
+    @Test public void preparationCanceledInBackgroundCannotReopenConfirmationOrQueueDownloads() throws Exception {
+        CountDownLatch started = new CountDownLatch(1), release = new CountDownLatch(1);
+        resolver((ep, cookie) -> { started.countDown(); release.await(5, TimeUnit.SECONDS); return Collections.singletonList(profile); });
+        invoke("prepareDownloads", new Class<?>[]{java.util.List.class, Models.Quality.class}, series.episodes.subList(0, 2), profile);
+        assertTrue(started.await(5, TimeUnit.SECONDS)); controller.pause(); release.countDown(); drainWorker();
+        assertFalse(dialogShowing()); assertTrue(repository.downloads().isEmpty());
     }
 
     private FakePlayer start(int index, Models.Quality quality, boolean offline) throws Exception {
