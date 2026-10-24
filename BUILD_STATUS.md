@@ -1,34 +1,34 @@
 # 当前交付状态
 
-番匣 **0.1.8 / versionCode 9**，包名 `com.animeshelf.app`，Android 8.0（API 26）及以上。源码提交 `f3493c20cb4fa5446bd4b4fee6550a1de35d5382` 在[构建 39978534430](https://github.com/Vicissitudes123/logistics-dashboard-demo/actions/runs/39978534430)通过测试、编译、签名及发布。
+番匣 **0.1.9 / versionCode 10**，包名 `com.animeshelf.app`，Android 8.0（API 26）及以上。源码提交 `3e4fd5901b607d5d603f2e194738faed98dab6d6` 在[构建 40045441137](https://github.com/Vicissitudes123/logistics-dashboard-demo/actions/runs/40045441137)通过测试、编译、签名及发布。
 
 ## 本轮改动
 
-- 设置中手动检查本项目公开更新清单，显示版本、说明与 APK/ZIP 下载入口。检查不传账号信息，限制清单大小与来源；点击后打开浏览器，安装由用户确认。
-- 默认仅 Wi-Fi 下载。根据当前网络及 VPN 底层传输类型判定，底层不明时等待；启动和下载请求打开/读取时均检查。网络恢复不覆盖用户手动暂停，已删除任务不会被旧失败回调重新加入。
-- 开放移动下载前提示流量费用。重置与备份导入立即应用网络策略；旧 v1 备份保留本机新增设置，v2 备份允许移动数据时在恢复前明确提示。
-- 每部番剧设置片头、片尾秒数，默认关闭。片头仅从头播放时跳过并可撤销；片尾留出至少 5 秒取消窗口，随后在下一个 500ms 轮询时跳转。暂停/缓冲/后台后重新留出完整取消窗口。短视频或不足 30 秒正文时不跳。
-- 本集临时取消、手动拖动优先于自动跳过；同一集刷新地址重试保留临时取消。片尾沿用已有结束与自动连播逻辑，未改变离线连播的网络边界。
-- 首页全部、未看完、已看完、有离线筛选，保留搜索输入与最近/置顶/其他顺序；只将音画均完整下载的番剧归为有离线。
+- 锁定与解锁图标固定在画面左侧同一位置。新增上一集、下一集、当前画质快捷入口；横屏单行、窄屏分行，图标保持无常驻底色与至少 48dp 点击区域。
+- 每部番剧记录成功播放的画质、编码和在线/离线模式；首页继续观看、选集及上下集优先沿用。没有对应档位时显示选择，不静默降档；缺少离线版本时不自动联网，改在线必须主动点击。
+- 播放中换画质保留选择时的实际位置、暂停状态和本集临时取消跳片。取消弹窗、后台、换集后不接受旧解析回调；明确重播会重启一轮跳片状态。
+- 拖动时显示真实目标附近关键帧缩略图与简短时间。单后台工作线程、300ms 请求间隔、2 秒位置桶与 24 张小图缓存，单次抽帧限制 8MiB、24 次打开与 8 秒读取预算。网络监听也统计服务器忽略 Range 时内部跳过的字节；松手、换集、后台取消过期结果。
+- 预览使用只读缓存，离线没有网络上游，不生成下载缓存片段。原生解码不可用时仅显示时间，并短暂退避。时间预算限制读取，不能保证强行中断已进入系统原生层的解码调用；不在 UI 线程等待释放。
+- 首页采用大封面最近观看卡片和自适应海报网格，统一搜索、筛选及底部导航；保留最近观看、置顶、其他顺序及长按管理。备份 v3 加入各番播放偏好，兼容 v1/v2。
 
 ## 验证
 
 - ParserSelfTest：132 项离线解析断言通过。
-- 245 项 JUnit/Robolectric 测试，25 个 suite，0 失败、0 错误、0 跳过；本轮新增 54 项。覆盖 Wi-Fi/VPN/移动网络判断、下载请求拦截与恢复、更新清单和网络边界、片库设置/备份兼容、筛选及跳过的 Activity 集成。
-- 初轮修复测试构造使用 SDK 隐藏网络 API 的问题；第二轮修正对话框 onShow 派发顺序与倒计时轮询边界的测试时序，保留原业务断言。最终完整测试通过。
-- Android 编译、Lint、apksigner 均通过；Lint 无错误，19 项警告。
-- Artifact SHA-256 与平台摘要一致；APK/安装 ZIP 的 CRC、包名、版本、最小系统版本、CI 签名报告及 APK 内嵌证书摘要核对通过。
-- 公开 APK、ZIP、校验文件与 latest.json 的 Git blob、字节数和 SHA-256 均与本地验证产物一致；实际更新入口指向本次构建。
-- 未连接安卓真机。小米 14 的实际 Wi-Fi/VPN 切换、后台下载和播放表现仍需安装验证；自动测试不等同真机验收。
+- 298 项 JUnit/Robolectric 测试，32 个 suite，0 失败、0 错误、0 跳过；本轮新增 53 项。覆盖续播/画质切换、备份兼容、预览代次取消/读取限额/离线边界、播放器手势及界面布局。
+- Android 编译、Lint、apksigner 均通过；Lint 无错误，20 项警告。
+- 已检查实际 Android View 原生渲染的 360/412dp 首页、横屏/竖屏播放器、锁定与缩略预览共 6 张 PNG。图片使用本地测试素材，几何测试验证控件可达、48dp 区域及无重叠；没有冒充真实番剧视频抽帧。
+- Artifact SHA-256 与平台摘要一致；APK/安装 ZIP CRC、包名、版本、最小系统版本、CI 签名报告及 APK 内嵌证书摘要均核对通过。
+- 公开 APK、ZIP、校验文件与 latest.json 的 Git blob、大小和 SHA-256 与本地验证产物一致；更新清单指向本轮源码构建。
+- 未连接安卓真机，真实 B站音视频格式的抽帧、HDR 和小米 14 上的实际操作仍需安装验证。缩略图来自附近关键帧，不保证每个格式均支持或与目标毫秒完全一致；此限制不影响主播放器继续播放。
 
 ## 安装包核验
 
-- Artifact：`12512323008`；SHA-256 `773749ed3efab4da74acdecf69279985060c22018415499a339393b18a70aaab`。
-- anime-shelf-0.1.8.apk：5,021,705 字节；SHA-256 `3858b58733e3f9cca1fa69e17592c43f6e77d608b3618b1a2cc139990dda5cb5`；Git blob `f9dd5c447b4addb94a34c0768243fa1a6fbcad6a`。
-- anime-shelf-0.1.8-install.zip：5,021,845 字节；SHA-256 `f82786c898be68ad767b8553a15b41f4f39a2f3b2897a91e7ad7b0a115d806ba`；Git blob `6b752c2f7064be9eadf9381e80f148aa28ab443b`。
-- 更新清单 SHA-256：`cd74df52cb2f33dc1ba249811571368dc4bd4463bc43ffd2fb39034201d465be`；schemaVersion 1。
+- Artifact：`12541615404`；SHA-256 `dfbd94236d5fcfc1f84fbd16b78fdb5a3df2e5a57bc6db41eb4bc3ab59b3bcfe`。
+- anime-shelf-0.1.9.apk：5,042,461 字节；SHA-256 `980f337bbd456b42fe0b89252018473969b3313fedf3d16d67173435ce146875`；Git blob `5ce93f57d9e4e025fd19c94fc309f467525c0092`。
+- anime-shelf-0.1.9-install.zip：5,042,601 字节；SHA-256 `4bb7a62835eb2f8a4da6421af6f18ac97dae2b500977c47730aeede394ff0c37`；Git blob `e9c55f710aa8fa2503b962a3bc37fb11a0fe524b`。
+- 更新清单 SHA-256：`8d41073ab2252fa3bf2c58fae83bbcc4cad6843cef6d43f42ce584c63bf21a6f`；schemaVersion 1。
 - 签名证书 SHA-256：`0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c`，与旧版一致，可覆盖安装。
-- 交付提交：`2fea4c04e45513828886dbebd1e4c3c3f498e754`。
-- [ZIP 安装包](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/2fea4c04e45513828886dbebd1e4c3c3f498e754/downloads/anime-shelf-0.1.8-install.zip)；[直接 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/2fea4c04e45513828886dbebd1e4c3c3f498e754/downloads/anime-shelf-0.1.8.apk)。解压 ZIP 后打开 APK 覆盖安装，不要先卸载。
+- 交付提交：`40503515b362e1f6298b250c2cc502d95d8d591c`。
+- [ZIP 安装包](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/40503515b362e1f6298b250c2cc502d95d8d591c/downloads/anime-shelf-0.1.9-install.zip)；[直接 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/40503515b362e1f6298b250c2cc502d95d8d591c/downloads/anime-shelf-0.1.9.apk)。解压 ZIP 后打开 APK 覆盖安装，不要先卸载。
 
 仅开发分支 anime-shelf-apk 更新。main 仍为 `414ff14c6c5a2bc34adee7fa4cbf40893c67817b`；0.1.6 固定存档仍为 `1f21e9b8ca9d009797f20d95551558472f1021f7`。
