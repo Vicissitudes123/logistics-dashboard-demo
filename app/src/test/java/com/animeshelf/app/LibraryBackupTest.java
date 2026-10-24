@@ -53,6 +53,7 @@ public class LibraryBackupTest {
         store.saveDownload("DOWNLOAD_INDEX_CANARY", online.episodes.get(0), quality);
         store.saveDownloadError("DOWNLOAD_INDEX_CANARY:v", "PRIVATE_FAILURE_CANARY");
         store.setPreferredQuality(quality);
+        store.setSeriesPlaybackPreference(online.id, true, quality);
         prefs.edit().putString("SESSDATA", "PREFERENCE_COOKIE_CANARY").commit();
         CookieManager cookies = CookieManager.getInstance();
         cookies.setCookie("https://api.bilibili.com", "SESSDATA=WEBVIEW_COOKIE_CANARY; Path=/");
@@ -324,7 +325,7 @@ public class LibraryBackupTest {
         store.saveSeries(series("ss1", "片头片尾设置", "ep1"));
         store.setWifiOnlyDownloads(false); store.setLibraryFilter("unfinished");
         store.setSkipSettings("ss1", true, 90, 75);
-        String text = store.exportBackup();
+        String text = asVersionTwo(store.exportBackup());
         JSONObject document = new JSONObject(text);
         assertEquals(2, document.getInt("version"));
         assertEquals(3, document.getJSONArray("series").getJSONObject(0).getJSONObject("skip").length());
@@ -409,12 +410,89 @@ public class LibraryBackupTest {
     }
 
     private static String asVersionOne(String text) throws Exception {
-        JSONObject document = new JSONObject(text).put("version", 1);
+        JSONObject document = new JSONObject(asVersionTwo(text)).put("version", 1);
         document.getJSONObject("settings").remove("wifiOnlyDownloads");
         document.getJSONObject("settings").remove("libraryFilter");
         JSONArray series = document.getJSONArray("series");
         for (int i = 0; i < series.length(); i++) series.getJSONObject(i).remove("skip");
         return document.toString();
+    }
+
+    private static String asVersionTwo(String text) throws Exception {
+        JSONObject document = new JSONObject(text).put("version", 2);
+        JSONArray series = document.getJSONArray("series");
+        for (int i = 0; i < series.length(); i++) series.getJSONObject(i).remove("playback");
+        return document.toString();
+    }
+
+    @Test public void versionThreeRestoresOnlyPortablePerSeriesPlaybackProfiles() throws Exception {
+        store.saveSeries(series("ss-online", "在线模式", "ep-online"));
+        store.saveSeries(series("ss-offline", "离线模式", "ep-offline"));
+        store.saveSeries(series("ss-unset", "尚未播放", "ep-unset"));
+        Models.Quality online = quality();
+        Models.Quality offline = quality(); offline.qn = 80; offline.id = "80:7:30216";
+        store.setSeriesPlaybackPreference("ss-online", false, online);
+        store.setSeriesPlaybackPreference("ss-offline", true, offline);
+        String text = store.exportBackup();
+        JSONObject document = new JSONObject(text);
+        assertEquals(3, document.getInt("version"));
+        assertFalse(text.contains("media.example"));
+        LibraryBackup.Snapshot snapshot = store.inspectBackup(text);
+        prefs.edit().clear().commit();
+        store.setSeriesPlaybackPreference("ss-unset", true, offline);
+        store.setSeriesPlaybackPreference("unrelated", true, offline);
+
+        store.importBackup(snapshot);
+
+        assertFalse(store.getSeriesPlaybackPreference("ss-online").offline);
+        assertEquals("112:12:0", store.getSeriesPlaybackPreference("ss-online").quality.id);
+        assertTrue(store.getSeriesPlaybackPreference("ss-offline").offline);
+        assertEquals("80:7:0", store.getSeriesPlaybackPreference("ss-offline").quality.id);
+        assertTrue(store.getSeriesPlaybackPreference("ss-offline").quality.videoCandidates().isEmpty());
+        assertTrue(store.getSeriesPlaybackPreference("ss-offline").quality.headers.isEmpty());
+        assertNull("An explicit v3 null restores the unset choice", store.getSeriesPlaybackPreference("ss-unset"));
+        assertEquals("80:7:0", store.getSeriesPlaybackPreference("unrelated").quality.id);
+        assertTrue("Restoring an offline preference never fabricates media downloads", store.savedDownloads().isEmpty());
+    }
+
+    @Test public void versionOneAndTwoBackupsKeepPlaybackChoicesMadeOnThePhone() throws Exception {
+        store.saveSeries(series("ss1", "旧备份", "ep1"));
+        String current = store.exportBackup();
+        for (String legacy : Arrays.asList(asVersionOne(current), asVersionTwo(current))) {
+            prefs.edit().clear().commit();
+            store.setSeriesPlaybackPreference("ss1", true, quality());
+
+            store.importBackup(store.inspectBackup(legacy));
+
+            Store reopened = new Store(context);
+            assertTrue(reopened.getSeriesPlaybackPreference("ss1").offline);
+            assertEquals("112:12:0", reopened.getSeriesPlaybackPreference("ss1").quality.id);
+            assertEquals(1, reopened.listSeries().size());
+        }
+    }
+
+    @Test public void invalidPerSeriesPlaybackInBackupWritesNoData() throws Exception {
+        store.saveSeries(series("ss1", "原片库", "ep1"));
+        store.setSeriesPlaybackPreference("ss1", false, quality());
+        String valid = store.exportBackup();
+        List<Object> invalid = Arrays.asList("online", new JSONObject(),
+            new JSONObject().put("offline", "true").put("profile", new JSONObject().put("qn", 80).put("codec", "7")),
+            new JSONObject().put("offline", true).put("profile", JSONObject.NULL),
+            new JSONObject().put("offline", true).put("profile", new JSONObject().put("qn", 0).put("codec", "7")),
+            new JSONObject().put("offline", true).put("profile", new JSONObject().put("qn", 80).put("codec", "bad")),
+            new JSONObject().put("offline", true).put("profile", new JSONObject().put("qn", 80).put("codec", "7").put("videoUrl", "https://private")),
+            new JSONObject().put("offline", true).put("profile", new JSONObject().put("qn", 80).put("codec", "7")).put("headers", new JSONObject()));
+        Map<String, ?> before = new HashMap<>(prefs.getAll());
+        for (Object value : invalid) {
+            JSONObject input = new JSONObject(valid);
+            input.getJSONArray("series").getJSONObject(0).put("playback", value);
+            assertThrows(IllegalArgumentException.class, () -> store.importBackup(store.inspectBackup(input.toString())));
+            assertEquals(before, prefs.getAll());
+        }
+        JSONObject missing = new JSONObject(valid);
+        missing.getJSONArray("series").getJSONObject(0).remove("playback");
+        assertThrows(IllegalArgumentException.class, () -> store.importBackup(store.inspectBackup(missing.toString())));
+        assertEquals(before, prefs.getAll());
     }
 
     private void progress(String id, long position, long duration, long timestamp, boolean complete) throws Exception {

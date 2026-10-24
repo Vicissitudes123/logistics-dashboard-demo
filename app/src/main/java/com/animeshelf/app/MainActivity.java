@@ -117,7 +117,10 @@ public final class MainActivity extends Activity {
     private LinearLayout libraryResults;
     private String libraryQuery = "";
     private LinearLayout libraryFilters;
+    private int libraryLayoutWidth;
+    private final List<Button> navigationButtons = new ArrayList<>();
     private CoverLoader coverLoader;
+    private SeekPreviewLoader seekPreviewLoader;
     private final Set<String> coverLookups = new LinkedHashSet<>();
     private final java.util.Map<String, ImageView> libraryCovers = new LinkedHashMap<>();
     private final java.util.Map<String, Models.Series> libraryCoverSeries = new LinkedHashMap<>();
@@ -130,9 +133,13 @@ public final class MainActivity extends Activity {
     private int playbackNavigationToken;
     interface QualityResolver { List<Models.Quality> load(Models.Episode episode, String cookie) throws Exception; }
     private QualityResolver qualityResolver = (episode, cookie) -> new BiliClient(cookie).qualities(episode);
+    interface PlayerFactory { ExoPlayer create(); }
+    private PlayerFactory playerFactory = () -> new ExoPlayer.Builder(this).build();
     interface UpdateResolver { UpdateChecker.Release check(int currentCode, int sdk) throws Exception; }
     private UpdateResolver updateResolver = UpdateChecker::check;
     private boolean updateChecking;
+    private boolean playbackChoicePending;
+    private AlertDialog playbackQualityDialog;
     private final SkipPlaybackPolicy skipPolicy = new SkipPlaybackPolicy();
     private LinearLayout skipNotice;
     private TextView skipNoticeText;
@@ -167,6 +174,7 @@ public final class MainActivity extends Activity {
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         media = MediaRepository.get(this);
         coverLoader = new CoverLoader(this);
+        seekPreviewLoader = new SeekPreviewLoader();
         buildUi();
         handler.post(ticker);
         renderLibrary();
@@ -196,21 +204,24 @@ public final class MainActivity extends Activity {
         root.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
             if (playerPanel != null && (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop)) resizeVideo();
         });
-        header = column(); header.setPadding(dp(20), dp(18), dp(20), dp(12));
+        header = column(); header.setPadding(dp(20), dp(10), dp(20), dp(8));
         LinearLayout brand = row();
-        brand.addView(button("首页", false, v -> renderLibrary()));
-        TextView name = text("番匣", 29, TEXT); name.setTypeface(null, Typeface.BOLD);
-        brand.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout identity = column();
+        TextView name = text("番匣", 26, TEXT); name.setTypeface(null, Typeface.BOLD);
+        identity.addView(name);
+        tagline = text("喜欢的故事，接着看", 10, MUTED); identity.addView(tagline);
+        brand.addView(identity, new LinearLayout.LayoutParams(0, -2, 1));
         loginButton = button("B站登录", false, v -> {
             ++selectionToken;
             startActivity(new Intent(this, LoginActivity.class));
         });
+        loginButton.setBackground(background(PANEL, 22));
+        loginButton.setContentDescription("B站登录");
         brand.addView(loginButton);
         addButton = button("＋ 添加", true, v -> addMenu());
+        addButton.setContentDescription("添加番剧");
         brand.addView(addButton);
         header.addView(brand);
-        tagline = text("把喜欢的故事，带在身边", 12, MUTED);
-        header.addView(tagline);
         root.addView(header);
 
         playerPanel = column(); playerPanel.setVisibility(View.GONE);
@@ -250,6 +261,18 @@ public final class MainActivity extends Activity {
             @Override public void setSpeed(float rate) { setPlaybackSpeed(rate); }
             @Override public void chooseSpeed() { MainActivity.this.chooseSpeed(); }
             @Override public void chooseEpisode() { chooseEpisodeMenu(); }
+            @Override public void previousEpisode() { adjacent(-1); }
+            @Override public void nextEpisode() { adjacent(1); }
+            @Override public boolean canPrevious() { return adjacentEpisode(-1) != null; }
+            @Override public boolean canNext() { return adjacentEpisode(1) != null; }
+            @Override public String qualityLabel() { return currentQualityLabel(); }
+            @Override public void chooseQuality() { choosePlaybackQuality(); }
+            @Override public void requestSeekPreview(long positionMs, java.util.function.Consumer<android.graphics.Bitmap> result) {
+                if (seekPreviewLoader != null && player != null && sourceReady)
+                    seekPreviewLoader.request(positionMs, result::accept);
+                else result.accept(null);
+            }
+            @Override public void cancelSeekPreview() { if (seekPreviewLoader != null) seekPreviewLoader.cancel(); }
             @Override public void chooseDisplay() { chooseDisplayMenu(); }
             @Override public void back() { onBackPressed(); }
             @Override public void home() { renderLibrary(); }
@@ -273,10 +296,10 @@ public final class MainActivity extends Activity {
         scroll.setOnScrollChangeListener((view, x, y, oldX, oldY) -> loadVisibleLibraryCovers());
         content = column(); content.setPadding(dp(20), dp(10), dp(20), dp(20));
         scroll.addView(content); body.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        nav = row(); nav.setPadding(dp(12), dp(6), dp(12), dp(10)); nav.setBackgroundColor(PANEL);
-        addEqual(nav, button("首页 · 番剧库", false, v -> renderLibrary()));
-        addEqual(nav, button("离线下载", false, v -> openDownloads()));
-        addEqual(nav, button("设置", false, v -> renderSettings()));
+        nav = row(); nav.setPadding(dp(12), dp(4), dp(12), dp(4)); nav.setBackgroundColor(BG);
+        addNavigationButton("首页", HomeArtwork.Symbol.LIBRARY, () -> renderLibrary());
+        addNavigationButton("离线下载", HomeArtwork.Symbol.DOWNLOAD, () -> openDownloads());
+        addNavigationButton("设置", HomeArtwork.Symbol.SETTINGS, () -> renderSettings());
         // Keep navigation outside the shrinking list area below the player.
         root.addView(nav);
     }
@@ -315,25 +338,36 @@ public final class MainActivity extends Activity {
         clearListSelection(); closePlayback();
         downloadGroupId = null; currentSeries = null;
         settingsPage = false; downloadsPage = false; seriesPage = false;
+        refreshNavigation();
         content.removeAllViews(); scroll.scrollTo(0, 0);
-        LinearLayout searchRow = row();
+        LinearLayout searchRow = row(); searchRow.setBackground(background(PANEL, 18));
+        searchRow.setPadding(dp(12), 0, dp(4), 0);
+        ImageView searchSymbol = new ImageView(this); searchSymbol.setImageDrawable(homeIcon(HomeArtwork.Symbol.SEARCH, MUTED, 21));
+        searchRow.addView(searchSymbol, new LinearLayout.LayoutParams(dp(24), dp(24)));
         librarySearch = new EditText(this);
-        librarySearch.setSingleLine(true); librarySearch.setTextSize(16);
+        librarySearch.setSingleLine(true); librarySearch.setTextSize(15);
         librarySearch.setTextColor(TEXT); librarySearch.setHintTextColor(MUTED);
-        librarySearch.setHint("搜索番剧，如高木 / JOJO"); librarySearch.setContentDescription("搜索番剧");
+        librarySearch.setHint("搜索片名，找到想看的番"); librarySearch.setContentDescription("搜索番剧");
         librarySearch.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        librarySearch.setBackgroundTintList(ColorStateList.valueOf(accentColor));
-        librarySearch.setPadding(dp(12), dp(10), dp(12), dp(10));
+        librarySearch.setBackgroundColor(Color.TRANSPARENT);
+        librarySearch.setPadding(dp(10), dp(10), dp(4), dp(10));
         librarySearch.setText(libraryQuery);
         searchRow.addView(librarySearch, new LinearLayout.LayoutParams(0, dp(52), 1));
-        searchRow.addView(button("清空", false, v -> librarySearch.setText("")));
+        ImageView clear = homeIconButton(HomeArtwork.Symbol.CLOSE, "清空搜索", v -> librarySearch.setText(""));
+        clear.setAlpha(.65f); searchRow.addView(clear, new LinearLayout.LayoutParams(dp(44), dp(48)));
         content.addView(searchRow, gapLayout());
-        HorizontalScrollView filters = new HorizontalScrollView(this);
-        filters.setHorizontalScrollBarEnabled(false);
-        libraryFilters = row(); filters.addView(libraryFilters);
-        content.addView(filters, gapLayout());
+        libraryFilters = row(); libraryFilters.setPadding(dp(3), dp(3), dp(3), dp(3));
+        libraryFilters.setBackground(background(PANEL, 16)); content.addView(libraryFilters, gapLayout());
         renderLibraryFilters();
         libraryResults = column(); content.addView(libraryResults);
+        libraryLayoutWidth = availableLibraryWidth();
+        libraryResults.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            int width = right - left;
+            if (width > 0 && width != libraryLayoutWidth) {
+                libraryLayoutWidth = width;
+                view.post(() -> { if (!dead && view == libraryResults) renderLibraryResults(); });
+            }
+        });
         librarySearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence value, int start, int before, int count) { }
@@ -368,10 +402,10 @@ public final class MainActivity extends Activity {
         }
         LibraryCatalogue.Sections sections = LibraryCatalogue.build(eligible, libraryQuery,
             store.getRecentVisibleSeriesId(), store::isPinned);
-        TextView heading = text("我的番剧", 21, TEXT); heading.setTypeface(null, Typeface.BOLD);
-        heading.setPadding(0, dp(5), 0, dp(5)); libraryResults.addView(heading);
-        TextView count = text(sections.total + " 部" + (libraryQuery.trim().isEmpty() ? " · 长按番剧或点管理，可置顶与移除" : "符合搜索 · 支持部分片名和空格分词"), 12, MUTED);
-        count.setPadding(0, 0, 0, dp(16)); libraryResults.addView(count);
+        LinearLayout collection = row(); collection.setPadding(dp(2), dp(8), dp(2), dp(14));
+        TextView heading = text("我的番剧", 23, TEXT); heading.setTypeface(null, Typeface.BOLD);
+        collection.addView(heading, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView count = text(sections.total + " 部", 12, MUTED); collection.addView(count); libraryResults.addView(collection);
         if (sections.total == 0) {
             LinearLayout box = card();
             box.addView(text(visible.isEmpty() ? "还没有显示在首页的番剧" : "没有找到匹配的番剧", 17, TEXT));
@@ -388,10 +422,10 @@ public final class MainActivity extends Activity {
             librarySection("最近观看"); addLibraryCard(sections.recent);
         }
         if (!sections.pinned.isEmpty()) {
-            librarySection("置顶番剧"); for (Models.Series series : sections.pinned) addLibraryCard(series);
+            librarySection("置顶番剧"); addLibraryGrid(sections.pinned);
         }
         if (!sections.others.isEmpty()) {
-            librarySection("其他番剧"); for (Models.Series series : sections.others) addLibraryCard(series);
+            librarySection("其他番剧"); addLibraryGrid(sections.others);
         }
         libraryResults.post(this::loadVisibleLibraryCovers);
     }
@@ -408,26 +442,30 @@ public final class MainActivity extends Activity {
                 store.setLibraryFilter(value); renderLibraryFilters(); renderLibraryResults();
             });
             choice.setContentDescription("首页筛选" + labels[i]); choice.setSelected(active);
-            libraryFilters.addView(choice);
+            choice.setTextSize(12); choice.setPadding(dp(2), dp(8), dp(2), dp(8));
+            choice.setBackground(background(active ? accentColor : Color.TRANSPARENT, 13));
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(42), 1);
+            params.setMargins(dp(1), 0, dp(1), 0); libraryFilters.addView(choice, params);
         }
     }
 
     private void librarySection(String label) {
         TextView heading = text(label, 14, MUTED); heading.setTypeface(null, Typeface.BOLD);
-        heading.setPadding(0, dp(4), 0, dp(10)); libraryResults.addView(heading);
+        heading.setPadding(dp(2), dp(2), 0, dp(10)); libraryResults.addView(heading);
     }
 
     private void addLibraryCard(Models.Series entry) {
-        LinearLayout card = card(); card.setContentDescription("番剧：" + entry.id);
-        LinearLayout identity = row();
-        FrameLayout poster = new FrameLayout(this); poster.setBackground(background(PANEL_LIGHT, 8)); poster.setClipToOutline(true);
-        TextView fallback = text(entry.title.isEmpty() ? "番" : entry.title.substring(0, 1), 28, accentColor);
-        fallback.setGravity(Gravity.CENTER); poster.addView(fallback, new FrameLayout.LayoutParams(-1, -1));
-        ImageView cover = new ImageView(this); cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        cover.setContentDescription("封面：" + entry.title); poster.addView(cover, new FrameLayout.LayoutParams(-1, -1));
-        LinearLayout.LayoutParams posterSize = new LinearLayout.LayoutParams(dp(64), dp(90)); posterSize.rightMargin = dp(14);
+        LinearLayout card = column(); card.setContentDescription("番剧：" + entry.id);
+        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+        GradientDrawable backdrop = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xFF252F45, PANEL});
+        backdrop.setCornerRadius(dp(20)); backdrop.setStroke(dp(1), 0xFF303B52); card.setBackground(backdrop);
+        LinearLayout identity = row(); identity.setGravity(Gravity.TOP);
+        int posterWidth = availableLibraryWidth() < dp(320) ? dp(104) : dp(118);
+        int posterHeight = Math.round(posterWidth * 1.5f);
+        FrameLayout poster = libraryPoster(entry);
+        LinearLayout.LayoutParams posterSize = new LinearLayout.LayoutParams(posterWidth, posterHeight); posterSize.rightMargin = dp(14);
         identity.addView(poster, posterSize); LinearLayout labels = column();
-        TextView title = text(entry.title, 18, TEXT); title.setTypeface(null, Typeface.BOLD); title.setMaxLines(2);
+        TextView title = text(entry.title, 19, TEXT); title.setTypeface(null, Typeface.BOLD); title.setMaxLines(3);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END); labels.addView(title);
         String lastId = store.getLastEpisode(entry.id);
         Models.Episode episode = findEpisode(entry, lastId);
@@ -435,24 +473,119 @@ public final class MainActivity extends Activity {
         boolean watched = store.isSeriesWatched(entry);
         String detail = entry.episodes.size() + " 集" + (watched ? " · 已看完" : lastId == null || lastId.isEmpty() ? " · 未开始" : " · 观看中")
             + (store.isPinned(entry.id) ? " · 已置顶" : "");
+        TextView subtitle = text(detail, 11, MUTED); subtitle.setPadding(0, dp(7), 0, dp(8)); labels.addView(subtitle);
         if (episode != null && lastId != null && !lastId.isEmpty()) {
             Store.Progress progress = store.getProgress(episode.id);
-            detail += " · 上次第 " + episode.index + " 集 " + time(progress.positionMs);
+            TextView position = text("第 " + episode.index + " 集  ·  " + time(progress.positionMs), 12, TEXT);
+            position.setPadding(0, dp(3), 0, dp(7)); labels.addView(position);
+            android.widget.ProgressBar progressLine = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+            progressLine.setMax(1000); progressLine.setProgress(progress.durationMs <= 0 ? 0 : (int) Math.min(1000, progress.positionMs * 1000d / progress.durationMs));
+            progressLine.setProgressTintList(ColorStateList.valueOf(accentColor)); progressLine.setProgressBackgroundTintList(ColorStateList.valueOf(0xFF3C465C));
+            progressLine.setContentDescription("观看进度：" + entry.title);
+            labels.addView(progressLine, new LinearLayout.LayoutParams(-1, dp(4)));
         }
-        TextView subtitle = text(detail, 12, MUTED); subtitle.setPadding(0, dp(7), 0, dp(8)); labels.addView(subtitle);
-        identity.addView(labels, new LinearLayout.LayoutParams(0, -2, 1)); card.addView(identity);
-        libraryCovers.put(entry.id, cover); libraryCoverSeries.put(entry.id, entry);
-        LinearLayout actions = row(); Models.Episode resume = episode;
-        addEqual(actions, button(lastId == null || lastId.isEmpty() ? "开始观看" : "继续观看", true, v -> {
+        LinearLayout actions = row(); actions.setPadding(0, dp(10), 0, 0); Models.Episode resume = episode;
+        Button play = button(lastId == null || lastId.isEmpty() ? "开始观看" : "继续观看", true, v -> {
             renderSeries(entry); if (resume != null) selectEpisode(resume);
-        }));
-        addEqual(actions, button("选集", false, v -> renderSeries(entry)));
-        Button manage = button("管理", false, v -> showLibraryActions(entry));
-        manage.setContentDescription("管理番剧：" + entry.id); addEqual(actions, manage);
-        card.addView(actions);
+        });
+        play.setContentDescription((lastId == null || lastId.isEmpty() ? "开始观看：" : "继续观看：") + entry.id);
+        play.setTextSize(12); play.setPadding(dp(6), dp(8), dp(6), dp(8));
+        actions.addView(play, new LinearLayout.LayoutParams(0, dp(44), 1));
+        ImageView manage = homeIconButton(HomeArtwork.Symbol.MORE, "管理番剧：" + entry.id, v -> showLibraryActions(entry));
+        actions.addView(manage, new LinearLayout.LayoutParams(dp(42), dp(44)));
+        labels.addView(actions); identity.addView(labels, new LinearLayout.LayoutParams(0, -2, 1)); card.addView(identity);
         card.setOnClickListener(v -> renderSeries(entry));
         card.setOnLongClickListener(v -> { showLibraryActions(entry); return true; });
         libraryResults.addView(card, gapLayout());
+    }
+
+    private void addLibraryGrid(List<Models.Series> entries) {
+        int available = availableLibraryWidth();
+        int columns = Math.max(1, Math.min(4, (available + dp(12)) / dp(152)));
+        int cellWidth = (available - (columns - 1) * dp(12)) / columns;
+        LinearLayout line = null;
+        for (int i = 0; i < entries.size(); i++) {
+            if (i % columns == 0) { line = row(); line.setGravity(Gravity.TOP); libraryResults.addView(line, gapLayout()); }
+            Models.Series entry = entries.get(i);
+            LinearLayout card = column(); card.setPadding(dp(8), dp(8), dp(8), dp(10));
+            card.setBackground(background(PANEL, 17)); card.setContentDescription("番剧：" + entry.id);
+            FrameLayout poster = libraryPoster(entry);
+            card.addView(poster, new LinearLayout.LayoutParams(-1, Math.round((cellWidth - dp(16)) * 1.4f)));
+            TextView title = text(entry.title, 15, TEXT); title.setTypeface(null, Typeface.BOLD);
+            title.setMaxLines(2); title.setMinLines(2); title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            title.setPadding(dp(3), dp(10), dp(3), 0); card.addView(title);
+            String lastId = store.getLastEpisode(entry.id);
+            boolean started = lastId != null && !lastId.isEmpty();
+            Models.Episode resume = findEpisode(entry, lastId);
+            if (resume == null && !entry.episodes.isEmpty()) resume = entry.episodes.get(0);
+            LinearLayout detailRow = row();
+            String metadata = entry.episodes.size() + " 集 · " + (store.isSeriesWatched(entry) ? "已看完" : started ? "观看中" : "未开始");
+            TextView detail = text(metadata, 11, MUTED); detail.setPadding(dp(3), 0, 0, 0); detail.setMaxLines(2);
+            detailRow.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
+            ImageView more = homeIconButton(HomeArtwork.Symbol.MORE, "管理番剧：" + entry.id, v -> showLibraryActions(entry));
+            detailRow.addView(more, new LinearLayout.LayoutParams(dp(40), dp(42))); card.addView(detailRow);
+            final Models.Episode target = resume;
+            Button watch = button(started ? "继续观看" : "开始观看", false, v -> { renderSeries(entry); if (target != null) selectEpisode(target); });
+            watch.setContentDescription((started ? "继续观看：" : "开始观看：") + entry.id);
+            watch.setTextColor(accentColor); watch.setTextSize(12); watch.setBackground(background(PANEL_LIGHT, 10));
+            watch.setCompoundDrawables(homeIcon(HomeArtwork.Symbol.PLAY, accentColor, 13), null, null, null);
+            card.addView(watch, new LinearLayout.LayoutParams(-1, dp(42)));
+            card.setOnClickListener(v -> renderSeries(entry)); card.setOnLongClickListener(v -> { showLibraryActions(entry); return true; });
+            LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, -2, 1);
+            if (i % columns > 0) cell.leftMargin = dp(12); line.addView(card, cell);
+        }
+        if (line != null) for (int i = entries.size() % columns; i > 0 && i < columns; i++) {
+            View spacer = new View(this); LinearLayout.LayoutParams cell = new LinearLayout.LayoutParams(0, 1, 1);
+            cell.leftMargin = dp(12); line.addView(spacer, cell);
+        }
+    }
+
+    private int availableLibraryWidth() {
+        if (libraryResults != null && libraryResults.getWidth() > 0) return libraryResults.getWidth();
+        int width = root != null && root.getWidth() > 0 ? root.getWidth() - root.getPaddingLeft() - root.getPaddingRight()
+            : getResources().getDisplayMetrics().widthPixels;
+        return Math.max(dp(200), width - dp(40));
+    }
+
+    private FrameLayout libraryPoster(Models.Series entry) {
+        FrameLayout poster = new FrameLayout(this);
+        GradientDrawable background = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{0xFF354560, 0xFF172132});
+        background.setCornerRadius(dp(12)); poster.setBackground(background); poster.setClipToOutline(true);
+        TextView fallback = text(entry.title.isEmpty() ? "番" : entry.title.substring(0, 1), 36, accentColor);
+        fallback.setGravity(Gravity.CENTER); poster.addView(fallback, new FrameLayout.LayoutParams(-1, -1));
+        ImageView cover = new ImageView(this); cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        cover.setContentDescription("封面：" + entry.title); poster.addView(cover, new FrameLayout.LayoutParams(-1, -1));
+        libraryCovers.put(entry.id, cover); libraryCoverSeries.put(entry.id, entry); return poster;
+    }
+
+    private android.graphics.drawable.Drawable homeIcon(HomeArtwork.Symbol symbol, int color, int sizeDp) {
+        HomeArtwork icon = new HomeArtwork(symbol, color); icon.setBounds(0, 0, dp(sizeDp), dp(sizeDp)); return icon;
+    }
+
+    private ImageView homeIconButton(HomeArtwork.Symbol symbol, String description, View.OnClickListener action) {
+        ImageView image = new ImageView(this); image.setImageDrawable(homeIcon(symbol, MUTED, 22));
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER); image.setPadding(dp(11), dp(11), dp(11), dp(11));
+        image.setContentDescription(description); image.setClickable(true); image.setFocusable(true);
+        image.setBackground(new android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x338DB7FF), null, background(Color.WHITE, 20)));
+        image.setOnClickListener(action); return image;
+    }
+
+    private void addNavigationButton(String label, HomeArtwork.Symbol symbol, Runnable action) {
+        Button item = button(label, false, v -> { action.run(); refreshNavigation(); });
+        item.setTag(symbol); item.setContentDescription("导航" + label); item.setTextSize(10);
+        item.setPadding(dp(4), dp(7), dp(4), dp(5)); item.setCompoundDrawablePadding(dp(4));
+        item.setBackgroundColor(Color.TRANSPARENT); navigationButtons.add(item);
+        addEqual(nav, item);
+    }
+
+    private void refreshNavigation() {
+        int selected = settingsPage ? 2 : downloadsPage ? 1 : 0;
+        for (int i = 0; i < navigationButtons.size(); i++) {
+            Button item = navigationButtons.get(i); boolean current = i == selected;
+            item.setSelected(current); item.setTextColor(current ? accentColor : MUTED);
+            item.setCompoundDrawables(null, homeIcon((HomeArtwork.Symbol) item.getTag(), current ? accentColor : MUTED, 23), null, null);
+            item.setBackground(background(current ? PANEL : Color.TRANSPARENT, 14));
+        }
     }
 
     private void loadVisibleLibraryCovers() {
@@ -533,11 +666,13 @@ public final class MainActivity extends Activity {
         if (addButton != null) addButton.setBackground(background(accentColor, 11));
         if (librarySearch != null) librarySearch.setBackgroundTintList(ColorStateList.valueOf(accentColor));
         if (playerOverlay != null) playerOverlay.refreshTheme();
+        refreshNavigation();
     }
 
     private void renderSettings() {
         dismissLibraryKeyboard(); clearListSelection(); closePlayback();
         settingsPage = true; downloadsPage = false; seriesPage = false; downloadGroupId = null;
+        refreshNavigation();
         content.removeAllViews(); scroll.scrollTo(0, 0);
         title("设置", "外观、播放习惯和设备内的数据管理");
         settingRow("主题色", ThemePalette.get(store.getThemeId()).name + " · 点击更换按钮和进度条颜色", "主题色设置", this::chooseTheme);
@@ -548,8 +683,8 @@ public final class MainActivity extends Activity {
         settingRow("自动播放下一集", store.isAutoNext() ? "已开启 · 当前集结束后继续" : "已关闭 · 点击开启", "自动连播设置", () -> {
             store.setAutoNext(!store.isAutoNext()); renderSettings();
         });
-        settingRow("记住画质偏好", (store.isRememberQuality() ? "已开启" : "已关闭") + " · " + preferredQualityText()
-            + "\n下一集优先同清晰度与编码，缺少时提示选择。", "画质偏好设置", this::chooseQualityPreference);
+        settingRow("全局默认画质", (store.isRememberQuality() ? "已开启" : "已关闭") + " · " + preferredQualityText()
+            + "\n首次观看新番时优先使用。每部番剧会单独沿用上次成功播放的画质和在线 / 离线模式。", "画质偏好设置", this::chooseQualityPreference);
         settingRow("仅 Wi-Fi 下载", (store.isWifiOnlyDownloads() ? "已开启 · 切到移动网络后等待 Wi-Fi" : "已关闭 · 允许使用移动数据下载")
             + "\n" + media.downloadNetworkInfo().summary, "仅Wi-Fi下载设置", this::chooseDownloadNetwork);
         settingRow("检查更新", "当前版本 " + installedVersionName() + " · 查看新版说明与安装包", "检查更新", this::checkForUpdates);
@@ -960,13 +1095,30 @@ public final class MainActivity extends Activity {
     private void selectEpisode(Models.Episode episode) {
         final int token = ++selectionToken;
         if (episode.localUri != null && !episode.localUri.isEmpty()) { play(episode, null, false); return; }
+        if (player != null && sourceReady && currentEpisode != null && episode.id.equals(currentEpisode.id)
+                && player.getPlayerError() == null && player.getPlaybackState() != Player.STATE_IDLE) {
+            playbackNavigationToken = token; playerOverlay.showControls();
+            if (player.getPlaybackState() == Player.STATE_ENDED) {
+                startSkipSession(episode.seriesId, 0); player.seekTo(0);
+            }
+            player.play(); return;
+        }
+        if (player != null && sourceReady && currentEpisode != null && currentQuality != null
+                && currentEpisode.seriesId.equals(episode.seriesId)) {
+            openContinuation(episode, currentOffline, currentQuality); return;
+        }
+        Store.SeriesPlaybackPreference saved = store.getSeriesPlaybackPreference(episode.seriesId);
+        if (saved != null) { openContinuation(episode, saved.offline, saved.quality); return; }
         if (hasDownload(episode.id)) {
             new AlertDialog.Builder(this).setTitle(episode.title)
                 .setItems(new String[]{"播放已下载版本", "选择在线清晰度 / 下载其他版本"}, (d, choice) -> {
                     if (token != selectionToken) return;
                     if (choice == 0) chooseOffline(episode); else loadQualities(episode);
                 }).show();
-        } else loadQualities(episode);
+        } else {
+            Models.Quality preferred = store.isRememberQuality() ? store.getPreferredQuality() : null;
+            if (preferred != null) openContinuation(episode, false, preferred); else loadQualities(episode);
+        }
     }
 
     private void loadQualities(Models.Episode episode) {
@@ -1006,6 +1158,129 @@ public final class MainActivity extends Activity {
             }).setNegativeButton("取消", null).show();
     }
 
+    /** A missing inherited profile asks for a replacement once, without asking the mode again. */
+    private void showContinuationQualityChoices(Models.Episode episode, List<Models.Quality> choices, int token) {
+        String[] names = new String[choices.size()];
+        for (int i = 0; i < names.length; i++) names[i] = choices.get(i).label;
+        new AlertDialog.Builder(this).setTitle("第 " + episode.index + " 集 · 在线画质")
+            .setItems(names, (dialog, index) -> { if (token == selectionToken) play(episode, choices.get(index), false); })
+            .setNegativeButton("取消", null).show();
+    }
+
+    private String currentQualityLabel() {
+        if (currentEpisode != null && !downloadable(currentEpisode)) return "本地";
+        if (currentQuality == null) return "清晰度";
+        switch (currentQuality.qn) {
+            case 6: return "240P";
+            case 16: return "360P";
+            case 32: return "480P";
+            case 64: return "720P";
+            case 74: return "720P60";
+            case 80: return "1080P";
+            case 112: return "1080P+";
+            case 116: return "1080P60";
+            case 120: return "4K";
+            case 125: return "HDR";
+            case 126: return "杜比视界";
+            case 127: return "8K";
+            default:
+                if (currentQuality.height > 0) return currentQuality.height + "P";
+                return "清晰度";
+        }
+    }
+
+    private void choosePlaybackQuality() {
+        if (player == null || currentEpisode == null) return;
+        if (!downloadable(currentEpisode)) { notice("本地文件使用原始画质"); return; }
+        playerOverlay.cancelInteraction();
+        final int token = ++selectionToken;
+        final ExoPlayer expectedPlayer = player;
+        final Models.Episode episode = currentEpisode;
+        playbackChoicePending = true;
+        if (currentOffline) showPlaybackQualityChoices(episode, downloadedQualities(episode.id), true, token, expectedPlayer);
+        else loadPlaybackQualityChoices(episode, token, expectedPlayer);
+    }
+
+    private void loadPlaybackQualityChoices(Models.Episode episode, int token, ExoPlayer expectedPlayer) {
+        String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
+        final int statusToken = ++taskStatusToken;
+        status.setText("正在读取清晰度…"); status.setVisibility(View.VISIBLE);
+        io.execute(() -> {
+            try {
+                List<Models.Quality> choices = qualityResolver.load(episode, cookie);
+                handler.post(() -> {
+                    if (dead || isFinishing()) return;
+                    if (statusToken == taskStatusToken) status.setVisibility(View.GONE);
+                    if (!resumed || token != selectionToken || player != expectedPlayer || currentEpisode != episode) return;
+                    showPlaybackQualityChoices(episode, choices, false, token, expectedPlayer);
+                });
+            } catch (Exception failure) {
+                handler.post(() -> {
+                    if (dead || isFinishing()) return;
+                    if (statusToken == taskStatusToken) status.setVisibility(View.GONE);
+                    if (!resumed || token != selectionToken || player != expectedPlayer || currentEpisode != episode) return;
+                    finishPlaybackChoice(token, expectedPlayer);
+                    error("未能读取清晰度", explain(failure));
+                });
+            }
+        });
+    }
+
+    private void showPlaybackQualityChoices(Models.Episode episode, List<Models.Quality> choices,
+                                            boolean offline, int token, ExoPlayer expectedPlayer) {
+        if (token != selectionToken || currentEpisode != episode || player != expectedPlayer) return;
+        List<Models.Quality> available = new ArrayList<>(choices);
+        String[] labels = new String[available.size()];
+        int selected = -1;
+        for (int i = 0; i < labels.length; i++) {
+            labels[i] = available.get(i).label;
+            if (offline == currentOffline && DownloadCatalogue.sameProfile(available.get(i), currentQuality) && selected < 0) selected = i;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(offline ? "已下载画质" : "在线画质")
+            .setNegativeButton("取消", null);
+        if (available.isEmpty()) builder.setMessage(offline ? "这集没有完整下载的版本。" : "暂时没有获取到可用清晰度，当前播放保留。");
+        else builder.setSingleChoiceItems(labels, selected, (dialog, index) -> {
+            switchPlaybackQuality(episode, available.get(index), offline, token, expectedPlayer); dialog.dismiss();
+        });
+        builder.setNeutralButton(offline ? "切换在线" : "离线版本", (dialog, which) -> {
+            if (token != selectionToken || player != expectedPlayer || currentEpisode != episode) return;
+            int nextToken = ++selectionToken;
+            if (offline) loadPlaybackQualityChoices(episode, nextToken, expectedPlayer);
+            else showPlaybackQualityChoices(episode, downloadedQualities(episode.id), true, nextToken, expectedPlayer);
+        });
+        AlertDialog dialog = builder.create();
+        playbackQualityDialog = dialog;
+        dialog.setOnDismissListener(d -> {
+            if (playbackQualityDialog == dialog) playbackQualityDialog = null;
+            finishPlaybackChoice(token, expectedPlayer);
+        });
+        dialog.show();
+    }
+
+    private void switchPlaybackQuality(Models.Episode episode, Models.Quality quality, boolean offline,
+                                       int token, ExoPlayer expectedPlayer) {
+        if (dead || !resumed || token != selectionToken || player != expectedPlayer || currentEpisode != episode) return;
+        if (offline && !media.isDownloaded(episode, quality)) {
+            finishPlaybackChoice(token, expectedPlayer); error("离线文件未就绪", "该版本尚未完整下载，当前播放保留。"); return;
+        }
+        long position = sourceReady ? Math.max(0, expectedPlayer.getCurrentPosition()) : requestedResumeMs;
+        boolean keepPlaying = expectedPlayer.getPlayWhenReady();
+        play(episode, quality, offline, position);
+        if (!keepPlaying && player != null) player.pause();
+    }
+
+    private void finishPlaybackChoice(int token, ExoPlayer expectedPlayer) {
+        if (!dead && token == selectionToken && player == expectedPlayer) {
+            playbackChoicePending = false;
+            playbackNavigationToken = selectionToken; playerOverlay.refresh();
+        }
+    }
+
+    private void dismissPlaybackQualityDialog() {
+        AlertDialog dialog = playbackQualityDialog; playbackQualityDialog = null;
+        if (dialog != null) dialog.dismiss();
+    }
+
     private void chooseOffline(Models.Episode episode) {
         final int token = selectionToken;
         List<Models.Quality> choices = downloadedQualities(episode.id);
@@ -1025,8 +1300,10 @@ public final class MainActivity extends Activity {
     private void play(Models.Episode episode, Models.Quality quality, boolean offline, long resumeOverrideMs) {
         boolean keepSkipDisabled = resumeOverrideMs >= 0 && currentEpisode != null
             && currentEpisode.id.equals(episode.id) && skipPolicy.isDisabledForSession();
+        dismissPlaybackQualityDialog(); playbackChoicePending = false;
         clearListSelection();
         autoNextQueued = false;
+        if (seekPreviewLoader != null) seekPreviewLoader.clearSource();
         ++selectionToken; playerOverlay.setActive(false); savePosition(); sourceReady = false;
         if (player != null) { playerView.setPlayer(null); player.release(); player = null; }
         currentEpisode = episode; currentQuality = quality; currentOffline = offline;
@@ -1039,7 +1316,7 @@ public final class MainActivity extends Activity {
         Models.Series found = findSeries(episode.seriesId);
         currentSeries = found;
         try {
-            ExoPlayer next = new ExoPlayer.Builder(this).build(); player = next;
+            ExoPlayer next = playerFactory.create(); player = next;
             playerView.setPlayer(next);
             if (episode.localUri != null && !episode.localUri.isEmpty()) next.setMediaItem(MediaItem.fromUri(episode.localUri));
             else next.setMediaSource(media.createMediaSource(episode, quality, offline));
@@ -1061,7 +1338,10 @@ public final class MainActivity extends Activity {
                     if (player != next) return;
                     if (state == Player.STATE_READY) {
                         sourceReady = true; applyZoom(); savePosition();
-                        if (quality != null && store.isRememberQuality()) store.setPreferredQuality(quality);
+                        if (quality != null && downloadable(episode)) {
+                            store.setSeriesPlaybackPreference(episode.seriesId, offline, quality);
+                            if (store.isRememberQuality()) store.setPreferredQuality(quality);
+                        }
                     }
                     if (state == Player.STATE_ENDED) { savePosition(); playerOverlay.showControls(); finishEpisode(next); }
                     playerOverlay.refresh();
@@ -1082,6 +1362,8 @@ public final class MainActivity extends Activity {
                 title("正在播放", "点击上方「首页」可保存进度并返回番剧库");
             }
             playbackNavigationToken = selectionToken;
+            try { seekPreviewLoader.setSource(media.createPreviewSource(episode, quality, offline)); }
+            catch (Exception unavailablePreview) { seekPreviewLoader.clearSource(); }
             handler.removeCallbacks(skipTicker); handler.post(skipTicker);
         } catch (Exception e) { showPlaybackFailure(e); }
     }
@@ -1104,8 +1386,11 @@ public final class MainActivity extends Activity {
     }
 
     private Models.Quality continuationProfile() {
-        Models.Quality preferred = store.isRememberQuality() ? store.getPreferredQuality() : null;
-        return preferred == null ? currentQuality : preferred;
+        if (sourceReady && currentQuality != null) return currentQuality;
+        Store.SeriesPlaybackPreference saved = currentEpisode == null ? null
+            : store.getSeriesPlaybackPreference(currentEpisode.seriesId);
+        if (saved != null) return saved.quality;
+        return store.isRememberQuality() ? store.getPreferredQuality() : currentQuality;
     }
 
     private void openContinuation(Models.Episode episode, boolean offline, Models.Quality profile) {
@@ -1116,8 +1401,12 @@ public final class MainActivity extends Activity {
             Models.Quality matched = PlaybackPolicy.preferredQuality(saved, profile);
             if (matched != null) { play(episode, matched, true); return; }
             new AlertDialog.Builder(this).setTitle("离线连播已暂停")
-                .setMessage(saved.isEmpty() ? "下一集还没有完整下载。请下载后继续，或手动选择在线播放。"
-                    : "下一集没有下载相同画质。请选择其他已下载版本继续。")
+                .setMessage(saved.isEmpty() ? "这集还没有完整下载。请下载后继续，或手动选择在线播放。"
+                    : "这集没有下载相同画质。请选择其他已下载版本继续。")
+                .setNegativeButton("取消", null)
+                .setNeutralButton("改为在线播放", (dialog, which) -> {
+                    if (token == selectionToken) openContinuation(episode, false, profile);
+                })
                 .setPositiveButton(saved.isEmpty() ? "知道了" : "选择离线版本", (dialog, which) -> {
                     if (!saved.isEmpty() && token == selectionToken) chooseOffline(episode);
                 }).show();
@@ -1132,7 +1421,7 @@ public final class MainActivity extends Activity {
             new AlertDialog.Builder(this).setTitle("请选择下一集画质")
                 .setMessage(profile == null ? "还没有可用的画质偏好，请先选择一次。" : "下一集没有返回相同清晰度与编码，已暂停连播。可手动选择其他版本。")
                 .setNegativeButton("取消", null).setPositiveButton("选择画质", (dialog, which) -> {
-                    if (token == selectionToken) showQualityChoices(episode, choices, token);
+                    if (token == selectionToken) showContinuationQualityChoices(episode, choices, token);
                 }).show();
         });
     }
@@ -1193,6 +1482,8 @@ public final class MainActivity extends Activity {
 
     private void closePlayback() {
         autoNextQueued = false;
+        dismissPlaybackQualityDialog(); playbackChoicePending = false;
+        if (seekPreviewLoader != null) seekPreviewLoader.clearSource();
         handler.removeCallbacks(skipTicker); skipPolicy.reset(); hideSkipNotice();
         restoreWindowBrightness();
         cancelBatchDownloads();
@@ -1224,21 +1515,20 @@ public final class MainActivity extends Activity {
     }
 
     private void adjacent(int direction) {
-        if (currentEpisode == null) return;
-        Models.Series playingSeries = findSeries(currentEpisode.seriesId);
-        if (playingSeries == null) return;
-        List<Models.Episode> ordered = DownloadCatalogue.episodes(playingSeries.episodes);
-        for (int i = 0; i < ordered.size(); i++) if (ordered.get(i).id.equals(currentEpisode.id)) {
-            int target = i + direction;
-            if (target < 0 || target >= ordered.size()) { notice(direction > 0 ? "已经是最后一集" : "已经是第一集"); return; }
-            openContinuation(ordered.get(target), currentOffline, continuationProfile()); return;
-        }
+        Models.Episode target = adjacentEpisode(direction);
+        if (target == null) { notice(direction > 0 ? "已经是最后一集" : "已经是第一集"); return; }
+        selectEpisode(target);
+    }
+
+    private Models.Episode adjacentEpisode(int direction) {
+        return currentEpisode == null ? null : PlaybackPolicy.adjacentEpisode(findSeries(currentEpisode.seriesId), currentEpisode, direction);
     }
 
     private void togglePlayback() {
         if (player == null) return;
         if (player.getPlaybackState() == Player.STATE_ENDED) {
             playbackNavigationToken = ++selectionToken; autoNextQueued = false;
+            if (currentEpisode != null) startSkipSession(currentEpisode.seriesId, 0);
             player.seekTo(0); player.play();
         } else if (player.getPlayerError() != null) {
             showPlaybackFailure(player.getPlayerError());
@@ -1579,6 +1869,7 @@ public final class MainActivity extends Activity {
     private void renderDownloads() {
         if (episodeSelectionMode) clearListSelection();
         settingsPage = false; downloadsPage = true; seriesPage = false; lastRender = System.currentTimeMillis();
+        refreshNavigation();
         int previousScroll = scroll.getScrollY();
         content.removeAllViews();
         List<MediaRepository.OfflineItem> entries = media.downloads();
@@ -2025,7 +2316,9 @@ public final class MainActivity extends Activity {
         else if (playerOverlay != null) playerOverlay.cancelInteraction();
     }
     @Override protected void onPause() {
-        resumeNavigation = player != null && selectionToken == playbackNavigationToken;
+        dismissPlaybackQualityDialog();
+        resumeNavigation = player != null && (selectionToken == playbackNavigationToken || playbackChoicePending);
+        playbackChoicePending = false;
         resumed = false; autoNextQueued = false; ++selectionToken;
         handler.removeCallbacks(skipTicker); hideSkipNotice();
         if (player != null) skipPolicy.update(player.getCurrentPosition(), player.getDuration(), false, false, false,
@@ -2039,6 +2332,7 @@ public final class MainActivity extends Activity {
         cancelBatchDownloads();
         savePosition(); playerOverlay.dispose(); dead = true; ++selectionToken; handler.removeCallbacksAndMessages(null); io.shutdownNow();
         if (coverLoader != null) coverLoader.close();
+        if (seekPreviewLoader != null) seekPreviewLoader.close();
         coverMetadata.shutdownNow();
         if (player != null) { playerView.setPlayer(null); player.release(); player = null; }
         super.onDestroy();

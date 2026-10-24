@@ -112,6 +112,28 @@ public class PlaybackPolicyTest {
         assertNull(PlaybackPolicy.nextEpisode(damaged, current));
     }
 
+    @Test public void previousEpisodeUsesCatalogueOrderAndNeverCrossesSeriesOrWraps() {
+        Models.Episode one = episode("ss1", "one", 1), two = episode("ss1", "two", 2), ten = episode("ss1", "ten", 10);
+        Models.Series series = series("ss1", ten, episode("ss2", "other", 3), one, two);
+        assertSame(two, PlaybackPolicy.adjacentEpisode(series, episode("ss1", "ten", 999), -1));
+        assertSame(one, PlaybackPolicy.adjacentEpisode(series, two, -1));
+        assertNull(PlaybackPolicy.adjacentEpisode(series, one, -1));
+        assertNull(PlaybackPolicy.adjacentEpisode(series, ten, 1));
+        assertNull(PlaybackPolicy.adjacentEpisode(series, episode("ss2", "two", 2), -1));
+        assertNull(PlaybackPolicy.adjacentEpisode(series, episode("ss1", "missing", 2), -1));
+        assertNull(PlaybackPolicy.adjacentEpisode(series, two, 0));
+        assertNull(PlaybackPolicy.adjacentEpisode(series, two, 2));
+    }
+
+    @Test public void previousEpisodeIgnoresDuplicateAndInvalidCatalogueRows() {
+        Models.Episode one = episode("ss1", "one", 1), two = episode("ss1", "two", 2);
+        Models.Episode three = episode("ss1", "three", 3);
+        Models.Series series = series("ss1", null, one, two, episode("ss1", "two", 2), episode("ss1", "", 2), three);
+        assertSame(two, PlaybackPolicy.adjacentEpisode(series, three, -1));
+        assertSame(one, PlaybackPolicy.adjacentEpisode(series, two, -1));
+        assertEquals(6, series.episodes.size());
+    }
+
     private static Models.Quality quality(int qn, String codec, String audio) {
         Models.Quality result = new Models.Quality();
         result.qn = qn; result.id = qn + ":" + codec + ":" + audio;

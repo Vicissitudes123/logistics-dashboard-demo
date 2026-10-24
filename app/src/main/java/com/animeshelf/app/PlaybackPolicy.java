@@ -22,6 +22,12 @@ public final class PlaybackPolicy {
 
     /** Locate the current episode within its series, then advance in numeric index order. */
     public static Models.Episode nextEpisode(Models.Series series, Models.Episode current) {
+        return adjacentEpisode(series, current, 1);
+    }
+
+    /** Previous/next use catalogue identity and numeric ordering, not labels or stale episode indices. */
+    public static Models.Episode adjacentEpisode(Models.Series series, Models.Episode current, int direction) {
+        if (direction != -1 && direction != 1) return null;
         if (series == null || current == null || blank(series.id) || blank(current.id)
                 || !series.id.equals(current.seriesId) || series.episodes == null) return null;
         List<Models.Episode> sameSeries = new ArrayList<>();
@@ -30,10 +36,15 @@ public final class PlaybackPolicy {
         }
         Set<String> seen = new HashSet<>();
         boolean found = false;
+        Models.Episode previous = null;
         for (Models.Episode episode : DownloadCatalogue.episodes(sameSeries)) {
             if (!seen.add(episode.id)) continue;
             if (found) return episode;
-            if (current.id.equals(episode.id)) found = true;
+            if (current.id.equals(episode.id)) {
+                if (direction < 0) return previous;
+                found = true;
+            }
+            previous = episode;
         }
         return null;
     }

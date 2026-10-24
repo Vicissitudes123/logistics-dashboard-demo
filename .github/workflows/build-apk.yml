@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 env:
-  EXPECTED_APK_VERSION: '0.1.8'
-  EXPECTED_APK_VERSION_CODE: '9'
+  EXPECTED_APK_VERSION: '0.1.9'
+  EXPECTED_APK_VERSION_CODE: '10'
   EXPECTED_APK_CERTIFICATE_SHA256: '0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c'
 
 jobs:
@@ -118,6 +118,7 @@ jobs:
             app/build/outputs/apk/debug/apk-signature.txt
             app/build/reports/lint-results-debug.html
             app/build/reports/network-probe.txt
+            app/build/reports/visuals/*.png
             app/build/reports/tests/testDebugUnitTest/
             app/build/test-results/testDebugUnitTest/*.xml
           if-no-files-found: error
@@ -233,10 +234,11 @@ jobs:
               'apkBytes': len(payload),
               'zipBytes': archive_target.stat().st_size,
               'notes': [
-                  '新增应用内手动检查更新。',
-                  '仅 Wi-Fi 下载默认开启，允许移动网络下载前会再次确认。',
-                  '每部番剧可分别设置跳过片头片尾，默认关闭，本集可暂时取消。',
-                  '首页新增全部、未看完、已看完、有离线视频筛选，可结合搜索。',
+                  '播放器锁定与解锁按钮统一固定在左侧。',
+                  '新增上一集、下一集与清晰度快捷入口。',
+                  '切换剧集沿用本番上次的画质及在线或离线播放方式。',
+                  '拖动进度时显示画面缩略预览；视频源不支持时保留时间提示。',
+                  '首页改为大封面最近观看与海报片库，统一搜索、筛选和导航样式。',
               ],
               'sourceCommit': source_commit,
           }

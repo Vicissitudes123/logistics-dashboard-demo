@@ -208,6 +208,38 @@ public final class Store {
         } catch (Exception ignored) { clearPreferredQuality(); }
     }
     public void clearPreferredQuality() { prefs.edit().remove("preferredQuality").apply(); }
+    /** Last successfully played online/offline choice for one series, without media addresses. */
+    public static final class SeriesPlaybackPreference {
+        public final boolean offline;
+        public final Models.Quality quality;
+        SeriesPlaybackPreference(boolean offline, Models.Quality quality) {
+            this.offline = offline;
+            this.quality = quality;
+        }
+        JSONObject toJson() throws org.json.JSONException {
+            return new JSONObject().put("offline", offline).put("profile", LibraryBackup.profileJson(quality));
+        }
+    }
+    public SeriesPlaybackPreference getSeriesPlaybackPreference(String seriesId) {
+        if (validId(seriesId)) try {
+            String encoded = prefs.getString("playback:" + seriesId, "");
+            if (!encoded.isEmpty()) return LibraryBackup.readPlayback(new JSONObject(encoded));
+        } catch (Exception ignored) { }
+        return null;
+    }
+    /** Call only after playback becomes ready. Missing/invalid source profiles never replace a working choice. */
+    public void setSeriesPlaybackPreference(String seriesId, boolean offline, Models.Quality quality) {
+        if (!validId(seriesId)) return;
+        Models.Quality safe = LibraryBackup.profile(quality);
+        if (safe == null) return;
+        try {
+            prefs.edit().putString("playback:" + seriesId,
+                new SeriesPlaybackPreference(offline, safe).toJson().toString()).apply();
+        } catch (org.json.JSONException exception) { throw new IllegalStateException("无法保存本番播放设置", exception); }
+    }
+    public void clearSeriesPlaybackPreference(String seriesId) {
+        if (validId(seriesId)) prefs.edit().remove("playback:" + seriesId).apply();
+    }
     /** Explicit yes/no takes precedence; otherwise every episode must have real completed progress. */
     public boolean isSeriesWatched(Models.Series series) {
         if (series == null || !validId(series.id)) return false;
@@ -261,10 +293,12 @@ public final class Store {
                             && progress.positionMs >= progress.durationMs - 1000));
                 }
                 String last = getLastEpisode(series.id);
+                SeriesPlaybackPreference playback = getSeriesPlaybackPreference(series.id);
                 seriesJson.put(new JSONObject().put("id", series.id).put("title", series.title)
                     .put("coverUrl", Models.safeCoverUrl(series.coverUrl)).put("pinned", isPinned(series.id))
                     .put("hidden", booleanPreference("hidden:" + series.id, false)).put("watched", watchedOverride(series.id))
                     .put("skip", getSkipSettings(series.id).toJson())
+                    .put("playback", playback == null ? JSONObject.NULL : playback.toJson())
                     .put("lastEpisodeId", episodeIds.contains(last) ? last : "").put("episodes", episodes));
                 exportedIds.add(series.id);
             }
@@ -391,6 +425,12 @@ public final class Store {
                 String watched = item.getString("watched");
                 if ("auto".equals(watched)) edit.remove("watched:" + id); else edit.putBoolean("watched:" + id, "yes".equals(watched));
                 if (item.has("skip")) edit.putString("skip:" + id, LibraryBackup.readSkip(item.getJSONObject("skip")).toJson().toString());
+                // Versions 1 and 2 did not record per-series playback choices.
+                // Only an explicit v3 null removes an existing choice.
+                if (item.has("playback")) {
+                    if (item.isNull("playback")) edit.remove("playback:" + id);
+                    else edit.putString("playback:" + id, LibraryBackup.readPlayback(item.getJSONObject("playback")).toJson().toString());
+                }
             }
             for (Map.Entry<String, String> entry : progressWrites.entrySet()) edit.putString("progress:" + entry.getKey(), entry.getValue());
             for (Map.Entry<String, String> entry : lastEpisodes.entrySet()) edit.putString("last:" + entry.getKey(), entry.getValue());

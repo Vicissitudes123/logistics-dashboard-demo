@@ -3,6 +3,7 @@ package com.animeshelf.app;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Canvas;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
@@ -30,6 +31,7 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 
 import java.util.Locale;
+import java.util.function.Consumer;
 
 /** Video-only controls. Interactive child views retain their own touch streams. */
 public final class PlayerOverlay extends FrameLayout {
@@ -55,6 +57,14 @@ public final class PlayerOverlay extends FrameLayout {
         void back();
         void home();
         void toggleFullScreen();
+        default void previousEpisode() { }
+        default void nextEpisode() { }
+        default boolean canPrevious() { return false; }
+        default boolean canNext() { return false; }
+        default String qualityLabel() { return "清晰度"; }
+        default void chooseQuality() { }
+        default void requestSeekPreview(long positionMs, Consumer<Bitmap> callback) { callback.accept(null); }
+        default void cancelSeekPreview() { }
     }
 
     private final Host host;
@@ -62,10 +72,12 @@ public final class PlayerOverlay extends FrameLayout {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final PlaybackGestures gestures = new PlaybackGestures();
     private final GestureDetector taps;
-    private final LinearLayout topBar, bottomBar;
+    private final LinearLayout topBar, bottomBar, timeline, actions, extraActions, seekPreview;
     private final TextView title, subtitle, position, duration, feedback;
-    private final ImageButton playButton, fullButton, lockButton, unlockButton;
-    private final Button speedButton;
+    private final TextView seekPreviewTime;
+    private final ImageView seekPreviewImage;
+    private final ImageButton playButton, fullButton, lockButton, unlockButton, previousButton, nextButton;
+    private final Button speedButton, episodeButton, displayButton, qualityButton;
     private final SeekBar seekBar;
     private boolean active, controlsVisible = true, fullScreen, scrubbing, scrubCanceled, touchAccepted, multiTouch, wasPlaying;
     private long previewMs = -1;
@@ -73,6 +85,9 @@ public final class PlayerOverlay extends FrameLayout {
     private float appliedBrightness = Float.NaN;
     private float edgeInsetPx, speedBeforeHold = 1f;
     private boolean temporaryBoost, longPressConsumed, doubleTapConsumed, locked;
+    private boolean compactActions;
+    private int previewRequest;
+    private long requestedPreviewPosition = -1;
 
     private final Runnable hide = new Runnable() {
         @Override public void run() {
@@ -117,7 +132,6 @@ public final class PlayerOverlay extends FrameLayout {
         topBar.addView(titles, new LinearLayout.LayoutParams(0, -2, 1));
         lockButton = icon("锁定播放器", Glyph.LOCK, this::lock);
         lockButton.setTooltipText("锁定播放器"); lockButton.setVisibility(GONE);
-        topBar.addView(lockButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
         topBar.addView(icon("回到首页", Glyph.HOME, host::home), new LinearLayout.LayoutParams(dp(48), dp(48)));
         addView(topBar, new FrameLayout.LayoutParams(-1, -2, Gravity.TOP));
 
@@ -126,7 +140,7 @@ public final class PlayerOverlay extends FrameLayout {
         bottomBar.setPadding(dp(8), 0, dp(8), 0);
         bottomBar.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
             new int[]{0xE6000000, 0x88000000, 0x00000000}));
-        LinearLayout timeline = new LinearLayout(context); timeline.setGravity(Gravity.CENTER_VERTICAL);
+        timeline = new LinearLayout(context); timeline.setGravity(Gravity.CENTER_VERTICAL);
         position = text("00:00", 12); duration = text("--:--", 12);
         position.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         duration.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
@@ -141,17 +155,19 @@ public final class PlayerOverlay extends FrameLayout {
         timeline.addView(seekBar, new LinearLayout.LayoutParams(0, dp(48), 1));
         timeline.addView(duration, new LinearLayout.LayoutParams(dp(54), dp(32)));
         bottomBar.addView(timeline);
-        LinearLayout actions = new LinearLayout(context); actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions = new LinearLayout(context); actions.setGravity(Gravity.CENTER_VERTICAL);
+        extraActions = new LinearLayout(context); extraActions.setGravity(Gravity.CENTER);
+        previousButton = icon("上一集", Glyph.PREVIOUS, () -> { if (host.canPrevious()) host.previousEpisode(); });
         playButton = icon("播放", Glyph.PLAY, () -> { host.togglePlayback(); refresh(); });
-        actions.addView(playButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        nextButton = icon("下一集", Glyph.NEXT, () -> { if (host.canNext()) host.nextEpisode(); });
         speedButton = label("1.0×", "播放速度", host::chooseSpeed);
-        actions.addView(speedButton, new LinearLayout.LayoutParams(dp(72), dp(48)));
-        actions.addView(label("选集", "选集", host::chooseEpisode), new LinearLayout.LayoutParams(dp(52), dp(48)));
-        actions.addView(label("画面", "显示方式", host::chooseDisplay), new LinearLayout.LayoutParams(dp(52), dp(48)));
-        actions.addView(new View(context), new LinearLayout.LayoutParams(0, 1, 1));
+        episodeButton = label("选集", "选集", host::chooseEpisode);
+        displayButton = label("画面", "显示方式", host::chooseDisplay);
+        qualityButton = label("清晰度", "清晰度", host::chooseQuality);
         fullButton = icon("全屏", Glyph.FULL, host::toggleFullScreen);
-        actions.addView(fullButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        bottomBar.addView(extraActions);
         bottomBar.addView(actions);
+        arrangeActions(true);
         addView(bottomBar, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
 
         feedback = text("", 17);
@@ -160,12 +176,27 @@ public final class PlayerOverlay extends FrameLayout {
         feedback.setBackground(bubble); feedback.setVisibility(GONE);
         feedback.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         addView(feedback, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
+        seekPreview = new LinearLayout(context); seekPreview.setOrientation(LinearLayout.VERTICAL);
+        seekPreview.setGravity(Gravity.CENTER); seekPreview.setVisibility(GONE);
+        seekPreview.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        seekPreviewImage = new ImageView(context); seekPreviewImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        GradientDrawable previewFrame = new GradientDrawable(); previewFrame.setColor(0xCC000000);
+        previewFrame.setCornerRadius(dp(8)); previewFrame.setStroke(dp(1), Color.WHITE);
+        seekPreviewImage.setBackground(previewFrame); seekPreviewImage.setPadding(dp(1), dp(1), dp(1), dp(1));
+        seekPreviewImage.setClipToOutline(true); seekPreviewImage.setVisibility(GONE);
+        seekPreview.addView(seekPreviewImage, new LinearLayout.LayoutParams(dp(176), dp(99)));
+        seekPreviewTime = text("", 15); seekPreviewTime.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        seekPreviewTime.setGravity(Gravity.CENTER); seekPreviewTime.setPadding(dp(8), dp(8), dp(8), dp(4));
+        seekPreview.addView(seekPreviewTime);
+        addView(seekPreview, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER));
         // This is independent of both auto-hiding bars, so locking always leaves
         // a visible, reachable way out without blocking the system Back action.
         unlockButton = icon("解锁播放器", Glyph.UNLOCK, this::unlock);
         unlockButton.setTooltipText("解锁播放器"); unlockButton.setVisibility(GONE);
         FrameLayout.LayoutParams unlockPosition = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START | Gravity.CENTER_VERTICAL);
-        unlockPosition.setMarginStart(dp(24));
+        unlockPosition.setMarginStart(dp(16));
+        FrameLayout.LayoutParams lockPosition = new FrameLayout.LayoutParams(unlockPosition);
+        addView(lockButton, lockPosition);
         addView(unlockButton, unlockPosition);
 
         seekBar.setOnTouchListener((view, event) -> {
@@ -182,11 +213,11 @@ public final class PlayerOverlay extends FrameLayout {
             @Override public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
                 if (locked || !fromUser || !host.canSeek() || host.durationMs() <= 0) return;
                 previewMs = Math.max(0, Math.min(host.durationMs(), Math.round(host.durationMs() * (value / 1000d))));
-                position.setText(time(previewMs)); showFeedback("进度 " + time(previewMs) + " / " + time(host.durationMs()));
+                position.setText(time(previewMs)); showSeekPreview(previewMs);
             }
             @Override public void onStopTrackingTouch(SeekBar bar) {
                 if (!locked && !scrubCanceled && host.canSeek() && previewMs >= 0) host.seekTo(previewMs);
-                scrubbing = false; previewMs = -1;
+                scrubbing = false; previewMs = -1; hideSeekPreview();
                 refresh(); dismissFeedbackSoon(); scheduleHide();
             }
         });
@@ -221,6 +252,36 @@ public final class PlayerOverlay extends FrameLayout {
         });
         taps.setIsLongpressEnabled(true);
         refresh();
+    }
+
+    /** Keep the same buttons and touch targets when moving between portrait and landscape. */
+    private void arrangeActions(boolean compact) {
+        compactActions = compact;
+        actions.removeAllViews(); extraActions.removeAllViews(); bottomBar.removeAllViews();
+        action(actions, previousButton, 48); action(actions, playButton, 48); action(actions, nextButton, 48);
+        actions.addView(new View(getContext()), new LinearLayout.LayoutParams(0, 1, 1));
+        if (compact) {
+            action(extraActions, speedButton, 72); action(extraActions, episodeButton, 64); action(extraActions, displayButton, 64);
+        } else {
+            action(actions, episodeButton, 56); action(actions, speedButton, 64); action(actions, displayButton, 56);
+        }
+        action(actions, qualityButton, 80); action(actions, fullButton, 48);
+        extraActions.setVisibility(compact ? VISIBLE : GONE);
+        if (compact) {
+            bottomBar.addView(extraActions); bottomBar.addView(actions); bottomBar.addView(timeline);
+        } else {
+            bottomBar.addView(timeline); bottomBar.addView(extraActions); bottomBar.addView(actions);
+        }
+    }
+
+    private void action(LinearLayout row, View view, int width) {
+        row.addView(view, new LinearLayout.LayoutParams(dp(width), dp(48)));
+    }
+
+    @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        boolean compact = MeasureSpec.getSize(widthMeasureSpec) < dp(500);
+        if (compact != compactActions) arrangeActions(compact);
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
     }
 
     public void setActive(boolean value) {
@@ -258,7 +319,7 @@ public final class PlayerOverlay extends FrameLayout {
     }
 
     private void updateLockControls() {
-        lockButton.setVisibility(fullScreen && active && !locked ? VISIBLE : GONE);
+        lockButton.setVisibility(fullScreen && active && !locked && controlsVisible && requestedPreviewPosition < 0 ? VISIBLE : GONE);
         unlockButton.setVisibility(fullScreen && active && locked ? VISIBLE : GONE);
     }
 
@@ -283,6 +344,13 @@ public final class PlayerOverlay extends FrameLayout {
         playButton.setEnabled(!locked && host.hasPlayer());
         playButton.setImageDrawable(new ControlIcon(host.isPlaying() ? Glyph.PAUSE : Glyph.PLAY, dp(32)));
         playButton.setContentDescription(host.isPlaying() ? "暂停" : "播放");
+        previousButton.setEnabled(!locked && host.hasPlayer() && host.canPrevious());
+        nextButton.setEnabled(!locked && host.hasPlayer() && host.canNext());
+        previousButton.setAlpha(previousButton.isEnabled() ? 1f : .35f);
+        nextButton.setAlpha(nextButton.isEnabled() ? 1f : .35f);
+        qualityButton.setEnabled(!locked && host.hasPlayer());
+        String quality = host.qualityLabel();
+        qualityButton.setText(quality == null || quality.trim().isEmpty() ? "清晰度" : quality);
         speedButton.setText(speedText(host.speed()));
         duration.setText(length > 0 ? time(length) : "--:--");
         if (!scrubbing && !gestures.isDragging()) {
@@ -297,12 +365,14 @@ public final class PlayerOverlay extends FrameLayout {
 
     public void showControls() {
         if (locked) { hideControls(); return; }
-        updateLockControls();
         controlsVisible = true; topBar.setVisibility(VISIBLE); bottomBar.setVisibility(VISIBLE);
+        actions.setVisibility(VISIBLE); extraActions.setVisibility(compactActions ? VISIBLE : GONE);
+        updateLockControls();
         scheduleHide();
     }
     public void hideControls() {
         controlsVisible = false; topBar.setVisibility(GONE); bottomBar.setVisibility(GONE);
+        if (!gestures.isDragging() && !scrubbing) hideSeekPreview();
         updateLockControls(); handler.removeCallbacks(hide);
     }
     public boolean areControlsVisible() { return controlsVisible; }
@@ -312,6 +382,7 @@ public final class PlayerOverlay extends FrameLayout {
         gestures.finish(true); touchAccepted = false; multiTouch = true;
         if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
         scrubbing = false; scrubCanceled = true; previewMs = -1;
+        hideSeekPreview();
         if (taps != null) {
             long now = android.os.SystemClock.uptimeMillis();
             MotionEvent cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0, 0, 0);
@@ -354,6 +425,7 @@ public final class PlayerOverlay extends FrameLayout {
         if (action == MotionEvent.ACTION_POINTER_DOWN || event.getPointerCount() > 1) {
             stopTemporarySpeed();
             multiTouch = true; gestures.finish(true); previewMs = -1;
+            hideSeekPreview();
             MotionEvent cancel = MotionEvent.obtain(event); cancel.setAction(MotionEvent.ACTION_CANCEL); taps.onTouchEvent(cancel); cancel.recycle();
             feedback.setVisibility(GONE);
             if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
@@ -374,6 +446,7 @@ public final class PlayerOverlay extends FrameLayout {
             if (stopTemporarySpeed()) showFeedback("已恢复 " + speedText(speedBeforeHold));
             PlaybackGestures.Update result = gestures.finish(action == MotionEvent.ACTION_CANCEL || multiTouch || longPressConsumed);
             if (result.commitSeek && host.canSeek()) host.seekTo(result.positionMs);
+            hideSeekPreview();
             previewMs = -1; touchAccepted = false; longPressConsumed = false; doubleTapConsumed = false;
             if (getParent() != null) getParent().requestDisallowInterceptTouchEvent(false);
             dismissFeedbackSoon(); refresh(); scheduleHide();
@@ -385,7 +458,7 @@ public final class PlayerOverlay extends FrameLayout {
         switch (change.mode) {
             case SEEK:
                 previewMs = change.positionMs;
-                showFeedback("进度 " + time(change.positionMs) + " / " + time(host.durationMs()) + "\n松手跳转");
+                showSeekPreview(change.positionMs);
                 position.setText(time(change.positionMs)); break;
             case BLOCKED_SEEK: showFeedback("当前视频暂不能拖动进度"); break;
             case BRIGHTNESS:
@@ -426,7 +499,49 @@ public final class PlayerOverlay extends FrameLayout {
         if (!locked && timeout > 0 && active && controlsVisible && host.isPlaying() && !scrubbing && !gestures.isDragging())
             handler.postDelayed(hide, timeout);
     }
-    private void showFeedback(String value) { handler.removeCallbacks(hideFeedback); feedback.setText(value); feedback.setVisibility(VISIBLE); }
+    private void showSeekPreview(long positionMs) {
+        if (!active || locked || !host.canSeek() || host.durationMs() <= 0) return;
+        long target = Math.max(0, Math.min(host.durationMs(), positionMs));
+        feedback.setVisibility(GONE); handler.removeCallbacks(hideFeedback);
+        seekPreviewTime.setText(time(target) + " / " + time(host.durationMs()));
+        seekPreview.setVisibility(VISIBLE);
+        topBar.setVisibility(INVISIBLE); actions.setVisibility(INVISIBLE);
+        extraActions.setVisibility(compactActions ? INVISIBLE : GONE);
+        bottomBar.setVisibility(VISIBLE); lockButton.setVisibility(GONE);
+        seekBar.setProgress((int) Math.max(0, Math.min(1000, Math.round(target * 1000d / host.durationMs()))));
+        if (target == requestedPreviewPosition) return;
+        requestedPreviewPosition = target;
+        seekPreviewImage.setImageDrawable(null); seekPreviewImage.setVisibility(GONE);
+        final int request = ++previewRequest;
+        host.requestSeekPreview(target, bitmap -> {
+            Runnable render = () -> {
+                if (!active || locked || request != previewRequest || target != requestedPreviewPosition
+                        || seekPreview.getVisibility() != VISIBLE) return;
+                if (bitmap == null || bitmap.isRecycled()) {
+                    seekPreviewImage.setImageDrawable(null); seekPreviewImage.setVisibility(GONE);
+                } else {
+                    seekPreviewImage.setImageBitmap(bitmap); seekPreviewImage.setVisibility(VISIBLE);
+                }
+            };
+            if (Looper.myLooper() == Looper.getMainLooper()) render.run(); else handler.post(render);
+        });
+    }
+
+    private void hideSeekPreview() {
+        boolean showing = requestedPreviewPosition >= 0;
+        ++previewRequest; requestedPreviewPosition = -1;
+        if (showing) host.cancelSeekPreview();
+        if (seekPreview == null) return;
+        seekPreview.setVisibility(GONE); seekPreviewImage.setImageDrawable(null); seekPreviewImage.setVisibility(GONE);
+        topBar.setVisibility(controlsVisible && !locked ? VISIBLE : GONE);
+        bottomBar.setVisibility(controlsVisible && !locked ? VISIBLE : GONE);
+        actions.setVisibility(VISIBLE); extraActions.setVisibility(compactActions ? VISIBLE : GONE);
+        updateLockControls();
+    }
+
+    private void showFeedback(String value) {
+        hideSeekPreview(); handler.removeCallbacks(hideFeedback); feedback.setText(value); feedback.setVisibility(VISIBLE);
+    }
     private void dismissFeedbackSoon() { handler.removeCallbacks(hideFeedback); handler.postDelayed(hideFeedback, 1000); }
     private ImageButton icon(String description, Glyph glyph, Runnable action) {
         ImageButton button = new ImageButton(getContext());
@@ -474,7 +589,7 @@ public final class PlayerOverlay extends FrameLayout {
             : String.format(Locale.ROOT, "%02d:%02d", seconds / 60, seconds % 60);
     }
 
-    private enum Glyph { PLAY, PAUSE, BACK, HOME, FULL, EXIT_FULL, LOCK, UNLOCK }
+    private enum Glyph { PLAY, PAUSE, PREVIOUS, NEXT, BACK, HOME, FULL, EXIT_FULL, LOCK, UNLOCK }
     private static final class ControlIcon extends Drawable {
         private final Glyph glyph;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -493,6 +608,12 @@ public final class PlayerOverlay extends FrameLayout {
             switch (glyph) {
                 case PLAY: paint.setStyle(Paint.Style.FILL); path.moveTo(6, 2); path.lineTo(22, 12); path.lineTo(6, 22); path.close(); break;
                 case PAUSE: paint.setStyle(Paint.Style.FILL); canvas.drawRoundRect(5, 2, 10, 22, 1, 1, paint); canvas.drawRoundRect(14, 2, 19, 22, 1, 1, paint); break;
+                case PREVIOUS:
+                    paint.setStyle(Paint.Style.FILL); canvas.drawRoundRect(3, 4, 6, 20, 1, 1, paint);
+                    path.moveTo(19, 4); path.lineTo(7, 12); path.lineTo(19, 20); path.close(); break;
+                case NEXT:
+                    paint.setStyle(Paint.Style.FILL); canvas.drawRoundRect(18, 4, 21, 20, 1, 1, paint);
+                    path.moveTo(5, 4); path.lineTo(17, 12); path.lineTo(5, 20); path.close(); break;
                 case BACK: path.moveTo(16, 3); path.lineTo(7, 12); path.lineTo(16, 21); break;
                 case HOME: path.moveTo(3, 11); path.lineTo(12, 3); path.lineTo(21, 11); path.moveTo(6, 10); path.lineTo(6, 21); path.lineTo(10, 21); path.lineTo(10, 15); path.lineTo(14, 15); path.lineTo(14, 21); path.lineTo(18, 21); path.lineTo(18, 10); break;
                 case LOCK:

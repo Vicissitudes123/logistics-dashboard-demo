@@ -10,6 +10,9 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.database.StandaloneDatabaseProvider;
 import androidx.media3.datasource.DefaultDataSource;
+import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.DataSource;
+import androidx.media3.datasource.DataSpec;
 import androidx.media3.datasource.cache.CacheDataSource;
 import androidx.media3.datasource.cache.NoOpCacheEvictor;
 import androidx.media3.datasource.cache.SimpleCache;
@@ -369,6 +372,32 @@ public final class MediaRepository {
         String key = key(e, q);
         MediaSource video = source(data, q.videoUrl, key + ":v");
         return hasAudio(q) ? new MergingMediaSource(video, source(data, q.audioUrl, key + ":a")) : video;
+    }
+
+    /** Does not open media. The frame worker gets only the video track and cannot modify downloads. */
+    public SeekPreviewLoader.Source createPreviewSource(Models.Episode episode, Models.Quality quality, boolean offline) {
+        if (episode.localUri != null && !episode.localUri.isEmpty()) {
+            return new SeekPreviewLoader.Source("local:" + episode.id,
+                new DefaultDataSource.Factory(context), new DataSpec.Builder().setUri(episode.localUri).build());
+        }
+        if (quality == null || quality.videoUrl == null || quality.videoUrl.isEmpty())
+            throw new IllegalArgumentException("缺少预览视频源");
+        if (offline && !isDownloaded(episode, quality)) throw new IllegalStateException("预览离线文件未完整保存");
+        String key = key(episode, quality);
+        if (!offline) register(key, quality);
+        MediaHttpDataSource.Request request = routes.get(key + ":v");
+        // Short preview-specific timeouts leave normal playback/download retry behavior unchanged.
+        DefaultDataSource.Factory previewUpstream = new DefaultDataSource.Factory(context,
+            new MediaHttpDataSource.Factory(spec -> request,
+                new DefaultHttpDataSource.Factory().setConnectTimeoutMs(1500).setReadTimeoutMs(1500)));
+        CacheDataSource.Factory readOnly = previewDataFactory(cache, previewUpstream, offline);
+        return new SeekPreviewLoader.Source((offline ? "offline:" : "online:") + key, readOnly,
+            new DataSpec.Builder().setUri(quality.videoUrl).setKey(key + ":v").build());
+    }
+
+    static CacheDataSource.Factory previewDataFactory(SimpleCache cache, DataSource.Factory online, boolean offline) {
+        return new CacheDataSource.Factory().setCache(cache).setCacheWriteDataSinkFactory(null)
+            .setUpstreamDataSourceFactory(offline ? null : online);
     }
     private MediaSource source(CacheDataSource.Factory data, String uri, String key) {
         return new ProgressiveMediaSource.Factory(data).createMediaSource(new MediaItem.Builder()

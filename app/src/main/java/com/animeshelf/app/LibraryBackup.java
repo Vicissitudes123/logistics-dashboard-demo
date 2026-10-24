@@ -17,7 +17,7 @@ public final class LibraryBackup {
     public static final int MAX_BYTES = 4 * 1024 * 1024;
     public static final int MAX_SERIES = 1000;
     public static final int MAX_EPISODES = 20000;
-    public static final int CURRENT_VERSION = 2;
+    public static final int CURRENT_VERSION = 3;
     private static final long MAX_DURATION_MS = 7L * 24 * 60 * 60 * 1000;
     private static final String FORMAT = "anime-shelf-library";
     private LibraryBackup() { }
@@ -80,7 +80,8 @@ public final class LibraryBackup {
             for (int i = 0; i < series.length(); i++) {
                 JSONObject item = object(series, i);
                 if (version == 1) keys(item, "id", "title", "coverUrl", "pinned", "hidden", "watched", "lastEpisodeId", "episodes");
-                else keys(item, "id", "title", "coverUrl", "pinned", "hidden", "watched", "skip", "lastEpisodeId", "episodes");
+                else if (version == 2) keys(item, "id", "title", "coverUrl", "pinned", "hidden", "watched", "skip", "lastEpisodeId", "episodes");
+                else keys(item, "id", "title", "coverUrl", "pinned", "hidden", "watched", "skip", "playback", "lastEpisodeId", "episodes");
                 String seriesId = id(item, "id", false);
                 require(seriesIds.add(seriesId), "备份含重复番剧 ID");
                 string(item, "title", 512, false);
@@ -90,6 +91,11 @@ public final class LibraryBackup {
                 String watched = string(item, "watched", 4, false);
                 require("auto".equals(watched) || "yes".equals(watched) || "no".equals(watched), "看完标记无效");
                 if (version >= 2) readSkip(object(item, "skip"));
+                if (version >= 3) {
+                    Object playback = item.get("playback");
+                    require(playback == JSONObject.NULL || playback instanceof JSONObject, "本番播放设置格式无效");
+                    if (playback instanceof JSONObject) readPlayback((JSONObject) playback);
+                }
                 String lastEpisode = id(item, "lastEpisodeId", true);
                 JSONArray episodes = array(item, "episodes", MAX_EPISODES);
                 episodeCount += episodes.length();
@@ -213,6 +219,11 @@ public final class LibraryBackup {
         int intro = (int) integer(value, "introSeconds", 0, 600);
         int outro = (int) integer(value, "outroSeconds", 0, 600);
         return new Store.SkipSettings(enabled, intro, outro);
+    }
+
+    static Store.SeriesPlaybackPreference readPlayback(JSONObject value) throws JSONException {
+        keys(value, "offline", "profile");
+        return new Store.SeriesPlaybackPreference(bool(value, "offline"), readProfile(object(value, "profile")));
     }
 
     private static void validateSettings(JSONObject value, int version) throws JSONException {

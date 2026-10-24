@@ -5,6 +5,8 @@ import static org.junit.Assert.*;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Rect;
+import android.graphics.Bitmap;
+import android.graphics.drawable.BitmapDrawable;
 import android.media.AudioManager;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -13,6 +15,12 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.TextView;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Consumer;
 import java.time.Duration;
 import org.junit.After;
 import org.junit.Before;
@@ -551,6 +559,68 @@ public class PlayerOverlayTest {
         }
     }
 
+    @Test public void quickEpisodeButtonsRespectBoundariesAndQualityUsesTheHostLabel() {
+        host.previousAvailable = false; host.nextAvailable = true; host.quality = "1080P";
+        overlay.refresh(); layout(640, 360);
+        assertFalse(find("上一集").isEnabled()); assertTrue(find("下一集").isEnabled());
+        assertEquals("1080P", ((TextView) find("清晰度")).getText().toString());
+        tapControl("上一集"); assertEquals(0, host.previousCalls);
+        tapControl("下一集"); assertEquals(1, host.nextCalls);
+        tapControl("清晰度"); assertEquals(1, host.qualityChoices);
+        host.previousAvailable = true; host.nextAvailable = false; overlay.refresh();
+        tapControl("上一集"); assertEquals(1, host.previousCalls);
+        tapControl("下一集"); assertEquals(1, host.nextCalls);
+        assertEquals("Shortcuts must not also become picture taps", 0, host.playbackToggles);
+        assertEquals(0, host.seekCalls);
+    }
+
+    @Test public void horizontalPreviewUsesOnlyTheNewestFrameAndReleaseRejectsLateResults() throws Exception {
+        overlay.hideControls(); down(160, 160);
+        touch(MotionEvent.ACTION_MOVE, 260, 160);
+        Consumer<Bitmap> old = host.previewCallbacks.get(host.previewCallbacks.size() - 1);
+        touch(MotionEvent.ACTION_MOVE, 320, 160);
+        Consumer<Bitmap> latest = host.previewCallbacks.get(host.previewCallbacks.size() - 1);
+        assertNotSame(old, latest);
+        ImageView picture = (ImageView) overlayField("seekPreviewImage");
+        TextView caption = (TextView) overlayField("seekPreviewTime");
+        Bitmap first = Bitmap.createBitmap(32, 18, Bitmap.Config.ARGB_8888);
+        Bitmap second = Bitmap.createBitmap(32, 18, Bitmap.Config.ARGB_8888);
+        latest.accept(second); idle(0);
+        assertEquals(View.VISIBLE, picture.getVisibility());
+        assertSame(second, ((BitmapDrawable) picture.getDrawable()).getBitmap());
+        old.accept(first); idle(0);
+        assertSame("An older target cannot replace the current frame", second, ((BitmapDrawable) picture.getDrawable()).getBitmap());
+        assertTrue(caption.getText().toString().contains(" / "));
+        assertFalse(caption.getText().toString().contains("进度"));
+        assertEquals(View.GONE, ((View) overlayField("feedback")).getVisibility());
+        touch(MotionEvent.ACTION_UP, 320, 160);
+        assertEquals(1, host.seekCalls); assertEquals(View.GONE, ((View) overlayField("seekPreview")).getVisibility());
+        latest.accept(second); old.accept(first); idle(0);
+        assertNull(picture.getDrawable()); assertTrue(host.previewCancels > 0);
+        assertFalse("The loader owns cached bitmap lifetime", first.isRecycled()); assertFalse(second.isRecycled());
+    }
+
+    @Test public void previewCancellationAndBackgroundNeverReopenTheThumbnailOrCommitASeek() throws Exception {
+        for (String reason : new String[]{"cancel", "background", "dispose"}) {
+            overlay.setActive(true); overlay.hideControls(); down(160, 160);
+            touch(MotionEvent.ACTION_MOVE, 260, 160);
+            Consumer<Bitmap> pending = host.previewCallbacks.get(host.previewCallbacks.size() - 1);
+            if (reason.equals("cancel")) overlay.cancelInteraction();
+            else if (reason.equals("background")) overlay.setActive(false);
+            else overlay.dispose();
+            Bitmap frame = Bitmap.createBitmap(32, 18, Bitmap.Config.ARGB_8888);
+            pending.accept(frame); idle(0);
+            assertEquals(reason, View.GONE, ((View) overlayField("seekPreview")).getVisibility());
+            assertNull(((ImageView) overlayField("seekPreviewImage")).getDrawable());
+            assertFalse(frame.isRecycled()); assertEquals(0, host.seekCalls);
+            touch(MotionEvent.ACTION_UP, 260, 160); assertEquals(0, host.seekCalls);
+        }
+    }
+
+    private Object overlayField(String name) throws Exception {
+        Field field = PlayerOverlay.class.getDeclaredField(name); field.setAccessible(true); return field.get(overlay);
+    }
+
     private void lockFullscreen() {
         overlay.setActive(true);
         overlay.setFullScreen(true);
@@ -643,6 +713,10 @@ public class PlayerOverlayTest {
         int controlsTimeoutMs = 3500;
         int playbackToggles, fullscreenToggles, seekCalls, observations, persistedSpeedChanges, temporarySpeedChanges;
         int brightnessChanges, speedChoices, episodeChoices, displayChoices, backCalls, homeCalls;
+        boolean previousAvailable, nextAvailable;
+        String quality = "清晰度";
+        int previousCalls, nextCalls, qualityChoices, previewCancels;
+        final List<Consumer<Bitmap>> previewCallbacks = new ArrayList<>();
         int[] actions() {
             return new int[]{playbackToggles, fullscreenToggles, seekCalls, persistedSpeedChanges, temporarySpeedChanges,
                 brightnessChanges, speedChoices, episodeChoices, displayChoices, backCalls, homeCalls};
@@ -667,5 +741,13 @@ public class PlayerOverlayTest {
         @Override public void back() { backCalls++; }
         @Override public void home() { homeCalls++; }
         @Override public void toggleFullScreen() { fullscreenToggles++; }
+        @Override public boolean canPrevious() { return previousAvailable; }
+        @Override public boolean canNext() { return nextAvailable; }
+        @Override public void previousEpisode() { previousCalls++; }
+        @Override public void nextEpisode() { nextCalls++; }
+        @Override public String qualityLabel() { return quality; }
+        @Override public void chooseQuality() { qualityChoices++; }
+        @Override public void requestSeekPreview(long position, Consumer<Bitmap> callback) { previewCallbacks.add(callback); }
+        @Override public void cancelSeekPreview() { previewCancels++; }
     }
 }
