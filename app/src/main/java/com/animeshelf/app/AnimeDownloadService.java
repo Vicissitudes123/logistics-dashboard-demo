@@ -32,9 +32,12 @@ public final class AnimeDownloadService extends DownloadService {
         boolean userPaused = false;
         for (Download download : downloads)
             userPaused |= (download.stopReason & DownloadNetworkPolicy.STOP_USER_PAUSED) != 0;
-        String description = userPaused ? "番匣 · 下载已暂停"
+        boolean active = false;
+        for (Download download : downloads) active |= download.state == Download.STATE_DOWNLOADING;
+        String description = repository.isManuallyPaused() ? "番匣 · 全部下载已暂停"
             : network.wifiOnly && !network.allowed
-            ? "番匣 · 等待 Wi-Fi 后继续下载" : "番匣 · 正在保存离线视频";
+            ? "番匣 · 等待 Wi-Fi 后继续下载" : !active && userPaused
+            ? "番匣 · 有任务已暂停" : "番匣 · 正在保存离线视频";
         return helper.buildProgressNotification(this, R.drawable.ic_download, null, description, downloads, unmetRequirements);
     }
 }
