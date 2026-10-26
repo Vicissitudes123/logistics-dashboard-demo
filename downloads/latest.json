@@ -6,10 +6,10 @@
   "minSdk": 26,
   "apkUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.11.apk",
   "zipUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.11-install.zip",
-  "apkSha256": "b257eba5d7f5dcc0c761d07ef46ccaab6f758712860b75ac45d1266383943b89",
-  "zipSha256": "a19cf86f2a5686dc48e6714b4ceea046ca294ede20682d43fcb50eb808c15c9f",
-  "apkBytes": 5069193,
-  "zipBytes": 5069335,
+  "apkSha256": "297432ab09b8cccfc03e9471192c6e18fd8f286395a1ecd30399d02e27900684",
+  "zipSha256": "01024578c7dd2bf8c2cb3d7a2158dfc4e6b50f4b4e40f68818f81c0fc235d393",
+  "apkBytes": 5069321,
+  "zipBytes": 5069463,
   "notes": [
     "批量下载确认后交由后台服务，队列保存在本机，可恢复未处理任务。",
     "单集暂停、继续与优先下载；音轨和视频同步控制。",
@@ -18,5 +18,5 @@
     "刷新已导入番剧并标记新增集数，不删除本机旧剧集或观看记录。",
     "新增 15、30、60 分钟及本集结束后停止，优先于自动连播。"
   ],
-  "sourceCommit": "a0ea637ff6975d40cce47edc360eabfaba4c7a7d"
+  "sourceCommit": "21c4b66e9b6e8146245018f17206007940485027"
 }
