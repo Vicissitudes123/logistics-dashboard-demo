@@ -1,0 +1,464 @@
+{
+  "archive_name": "anime-shelf-0.1.10-20261026",
+  "archived_date": "2026-10-26",
+  "timezone": "Asia/Shanghai",
+  "repository": "Vicissitudes123/logistics-dashboard-demo",
+  "archive_branch": "archive/anime-shelf-0.1.10-20261026",
+  "snapshot_commit": "81293df64257ef7ff1d5b2e3d4d4ccd63c48b5f2",
+  "snapshot_tree": "f215084bb5eca72631ae5f47bf8bb0b39e731f99",
+  "build_source_commit": "c5f972e87913d66ffc35adf6545d0fad152eaad0",
+  "delivery_commit": "19bcfc57cbb597a8e497f3ca65939ba4592b7876",
+  "package": "com.animeshelf.app",
+  "version": "0.1.10",
+  "version_code": 11,
+  "min_sdk": 26,
+  "certificate_sha256": "0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c",
+  "workflow_run": 40055560862,
+  "parser_assertions": 132,
+  "junit": {
+    "tests": 316,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "name": "anime-shelf-0.1.10.apk",
+      "bytes": 5050969,
+      "sha256": "650c5fdb6a6f62e68efef7fbe0cd20b926a4746abbcde80c1426336a8d17e7b6",
+      "git_blob": "ef129d1a66201579854f339a43d575233e118f23"
+    },
+    {
+      "name": "anime-shelf-0.1.10-install.zip",
+      "bytes": 5051111,
+      "sha256": "5818b5fcd416bf68029cb05c83067dc963e0cdd1aaf6e1eb9cf8a4cce6716b2a",
+      "git_blob": "ab6968038f57eb6dc6397a0651d680ecc5d57a6e"
+    }
+  ],
+  "update_manifest": {
+    "name": "latest.json",
+    "bytes": 1185,
+    "sha256": "4b9d39a3ae6844317f979cf90aa07f5aa1ad0e9bbb47200fb1ebebb08d738fa5",
+    "git_blob": "7fa3a5bd506f00701bd31ed899860367b15a5eeb"
+  },
+  "local_source_archive": {
+    "name": "anime-shelf-0.1.10-source.zip",
+    "bytes": 268561,
+    "sha256": "e1163d94e9737a9404e60f97868507f7158d93cc3d63c8b43307a6dfd2b1268b"
+  },
+  "source_files": [
+    {
+      "path": ".github/workflows/build-apk.yml",
+      "git_blob": "b4a8113d20aa71d52a9afb3c67db1a7789a58bbe",
+      "mode": "100644"
+    },
+    {
+      "path": ".github/workflows/deliver-apk.yml",
+      "git_blob": "7dea2b318baf585370da83693bad5aeae3b6dec9",
+      "mode": "100644"
+    },
+    {
+      "path": ".gitignore",
+      "git_blob": "38fdbd2f63a45b58a73074315d972693fcdda13c",
+      "mode": "100644"
+    },
+    {
+      "path": "BUILD_STATUS.md",
+      "git_blob": "61323ff5e6fdbbc9cefa157b58b6cb4b801bab4d",
+      "mode": "100644"
+    },
+    {
+      "path": "README.md",
+      "git_blob": "dcd14f823ccef27c1024eac6aee31af914dfe067",
+      "mode": "100644"
+    },
+    {
+      "path": "app/build.gradle",
+      "git_blob": "1cd8007ec87048f001804a540f22f6df7d92e2bf",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/AndroidManifest.xml",
+      "git_blob": "1b2db5d0e5d421a439602ad6f10737cf3d659ef2",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/AnimeDownloadService.java",
+      "git_blob": "404da10cd90de351318e596f29bdba06ea1a6fc0",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/BatchDownloadSession.java",
+      "git_blob": "29fe6646682ab75d0428e94a127d782d881ae9e6",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/BiliClient.java",
+      "git_blob": "54e687df3b5b354ab1bf0c2c7e6770e0d1337915",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/CoverLoader.java",
+      "git_blob": "6f002adeea802b22fbb17046d140699ae5d7f639",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadCatalogue.java",
+      "git_blob": "0effb6b33b7c401372334395e0deb3eebc4993db",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadEstimate.java",
+      "git_blob": "eef708d6401d320758d4ee7590fe6973aa086a15",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadNetworkPolicy.java",
+      "git_blob": "3a95703686f887e291647bfffa4b50ca0c5a8de7",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadPlan.java",
+      "git_blob": "19a151a26d7b436cfa2f27d691c289f397cf7010",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadPolicyDataSource.java",
+      "git_blob": "3cd8baaee8069e456e464e64898fd34240ce417d",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadStatus.java",
+      "git_blob": "cd7f70fcdb13509fcd395057b776a30e20f5d613",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadTelemetry.java",
+      "git_blob": "7ee16e52895bea5965052bf62d6bd97847660085",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/HomeArtwork.java",
+      "git_blob": "b704c8b61d2937defc76e0c6f990e9d0ecb1d8f2",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/LibraryBackup.java",
+      "git_blob": "069d22250640664762c97ba699396c39d28c1df3",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/LibraryCatalogue.java",
+      "git_blob": "3e241c6d17024d445bba08e9c6983e65bbfc1836",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/LoginActivity.java",
+      "git_blob": "189446bd7340dec19ed4f60f8887f7b9459541cd",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MainActivity.java",
+      "git_blob": "95435f98625c349f8745686d6cec3b2458a56892",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MediaErrors.java",
+      "git_blob": "386cb2ab9e26ec602c134bb8262b91ab8f12bf17",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MediaHttpDataSource.java",
+      "git_blob": "ca66e5da35b0ce8769396d286a6ea748e04c7b5a",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MediaRepository.java",
+      "git_blob": "6283c32c01a8a6a1490c3d3bc6e1301afdabd959",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/Models.java",
+      "git_blob": "5827a955b22f538a97b8b753d1e2700c9707ed9b",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PlaybackGestures.java",
+      "git_blob": "367e553a352aea1990234048ad3c05f722bbbff5",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PlaybackPolicy.java",
+      "git_blob": "1a593bb3943f77aaa950b5758028c9e76ed6d180",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PlayerOverlay.java",
+      "git_blob": "bb486b96602290d72bdf242ff77ecc52c93b687d",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PreviewMediaDataSource.java",
+      "git_blob": "1f0d85726e0f311caf7df209b5062eb71f1db067",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/SeekPreviewLoader.java",
+      "git_blob": "5620ed853f9717af2b2718a0d16850d12022a967",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/SkipPlaybackPolicy.java",
+      "git_blob": "1c22fe0e03dedc339214078b1ecd28e51d319960",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/Store.java",
+      "git_blob": "5f1c684e55213acdeb1ea4fa166de8b1bd4a4471",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/ThemePalette.java",
+      "git_blob": "c106fe95e3e9dd6f148acb2031203954528d7963",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/UpdateChecker.java",
+      "git_blob": "9ff29a82bbfafe9ea65893029da0729ebdeedcc6",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/VideoDiagnostics.java",
+      "git_blob": "e13ceb6f5b99094ba01feebfc6cb5adef04d24ca",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_download.xml",
+      "git_blob": "d5588719f93b3148e243d002ad2d646306f32ccf",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_launcher.xml",
+      "git_blob": "33a087b50dece4da606373e19ef6456cb27c107d",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/res/layout/player_surface.xml",
+      "git_blob": "a864f15fdf7f9d0a9713b639417f919b69fe5806",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/main/res/values/strings.xml",
+      "git_blob": "e849d64cb76d3857baf822a9c9eb46e2b5fc2d02",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/BatchDownloadSessionTest.java",
+      "git_blob": "fe2178a396ac63af7b4344bbb7aa648ae0681d88",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/CoverLoaderTest.java",
+      "git_blob": "3a59420afa060746f25febfff319a27093d5a760",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadCatalogueTest.java",
+      "git_blob": "5bc7f07dbbe5f4f29cc160d4a7c92bf88dc87815",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadEstimateTest.java",
+      "git_blob": "9ecf29e9574fb8d556bb7ebde6129a4979dc6aaa",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadNetworkPolicyTest.java",
+      "git_blob": "ea0dd35a219f6aa9ef74b0f208f6cb1df50d97fb",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadPlanTest.java",
+      "git_blob": "7d902c315c3b2eeabf4126c7051d490f82a74513",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadPolicyDataSourceTest.java",
+      "git_blob": "4a1240fd38298f6f549144baad4d7703513501cf",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadStatusTest.java",
+      "git_blob": "b665f681eb7a42c4a4c071943f9b46081690418a",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadTelemetryTest.java",
+      "git_blob": "71ac97271e5195a6a8dbbfb8414a596c4546e292",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/HomeDesignTest.java",
+      "git_blob": "70b0a5229c5aa86540ce3b23d08418f271ab71e6",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/LibraryBackupTest.java",
+      "git_blob": "5852f7f452edf18646c820326caf48fb28f01fd7",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/LibraryCatalogueTest.java",
+      "git_blob": "c8684ae27edc4f1f41b56ca0bf0f9ec874217c35",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainEnhancementTest.java",
+      "git_blob": "369c81bf23aa40480d4bf1dfdc056578645e9334",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainFeatureTest.java",
+      "git_blob": "2aabfcfffb961abe87aae8f06289fc61c6db2afa",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainLibraryTest.java",
+      "git_blob": "d9ddbcc415b32cc56d3b7a3a0f8e196192804292",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainNavigationTest.java",
+      "git_blob": "44002516c18da677422e515b9e5062c5855b2540",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainPlaybackContinuityTest.java",
+      "git_blob": "46dbd88daf3de85d9be80816b594a2551760cf18",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainSelectionTest.java",
+      "git_blob": "b0a8f5f22accfed94c857e521af73914350f9b8b",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MediaErrorsTest.java",
+      "git_blob": "7bf28f6916243579117eed1c7661eb9f00b25606",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MediaHttpDataSourceTest.java",
+      "git_blob": "9a5292797ace9ba878a35265d59f23b110ca3983",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlaybackGesturesTest.java",
+      "git_blob": "c6c5fe07693033172e00531db5e96ba750ff070a",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlaybackPolicyTest.java",
+      "git_blob": "2686837d6e2d2e0b4dd22e0239840ccc9bbae156",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlayerControlsLayoutTest.java",
+      "git_blob": "6502aa38235d5c7d224526a9cc4bd565146258ec",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlayerOverlayDensityTest.java",
+      "git_blob": "f222b4b514300fedae6e8e39dfd52f69437ce619",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlayerOverlayTest.java",
+      "git_blob": "151b2b9509a2db574950c206b87702d816a9a20f",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PreviewCacheBoundaryTest.java",
+      "git_blob": "331a828069b759b19ec4e3e805eea142690674bb",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PreviewMediaDataSourceTest.java",
+      "git_blob": "e261905835668a3cef1bfc03f31b9c075dcec087",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/SeekPreviewLoaderTest.java",
+      "git_blob": "2f79a67a71653953b005082879d17bf887f3753d",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/SkipPlaybackPolicyTest.java",
+      "git_blob": "2530c5a42887f06e2d8f94291de4c8099c63536d",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/StoreDownloadSettingsTest.java",
+      "git_blob": "ead32899b0df616037f329b499046e1b168934a9",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/StorePlaybackPreferenceTest.java",
+      "git_blob": "36512e779a15d82085afb11777b8bd10c7bee3a1",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/StoreSettingsTest.java",
+      "git_blob": "dc5e35e58d843534f999f5f0b4d08f4cdb45d076",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/UpdateCheckerTest.java",
+      "git_blob": "20f48a53eb33d130ace91470425c0ba0363c65f4",
+      "mode": "100644"
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/VideoDiagnosticsTest.java",
+      "git_blob": "3230a4f268fb7601d4bda61175df51611fceb7bf",
+      "mode": "100644"
+    },
+    {
+      "path": "build.gradle",
+      "git_blob": "5b7ccba7c566afb5057eaea1b10b99b083851fe4",
+      "mode": "100644"
+    },
+    {
+      "path": "gradle.properties",
+      "git_blob": "2e11322913e56c04783e2f5dbe7927b9e0539007",
+      "mode": "100644"
+    },
+    {
+      "path": "gradle/wrapper/gradle-wrapper.properties",
+      "git_blob": "09523c0e5490700d1a647ecf95309b5f7f9a8199",
+      "mode": "100644"
+    },
+    {
+      "path": "gradlew",
+      "git_blob": "145bbb6cd891a1239f5771716ed3df8f7ff69168",
+      "mode": "100755"
+    },
+    {
+      "path": "settings.gradle",
+      "git_blob": "e44844742e7607990c92cb1fb1197dc2acd19d67",
+      "mode": "100644"
+    },
+    {
+      "path": "tests/ParserSelfTest.java",
+      "git_blob": "9ce4b6de84db773f4887c6fd0ec0dd0779e40bb6",
+      "mode": "100644"
+    },
+    {
+      "path": "tests/probe_media_request.py",
+      "git_blob": "2ceb39b1f49012a9d74f8f5043399325937b8b2a",
+      "mode": "100644"
+    }
+  ],
+  "phone_user_data_included": false,
+  "signing_private_key_included": false,
+  "rollback_strategy": "Restore source from the fixed snapshot in an isolated branch. Preserve the package and signing key; use a versionCode higher than the installed version, check data compatibility and rebuild. Do not uninstall to downgrade."
+}
