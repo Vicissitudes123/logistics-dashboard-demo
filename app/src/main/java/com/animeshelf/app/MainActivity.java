@@ -2056,8 +2056,10 @@ public final class MainActivity extends Activity {
                 card.setContentDescription("离线番剧 " + group.title + "，长按选择");
                 TextView name = text(group.title, 18, TEXT); name.setTypeface(null, Typeface.BOLD); card.addView(name);
                 TextView detail = text(group.episodeCount + " 集 · " + group.items.size() + " 份视频 · 已完成 "
-                    + group.completeCount + " 份 · " + android.text.format.Formatter.formatShortFileSize(this, group.bytes), 12, MUTED);
-                detail.setPadding(0, dp(7), 0, dp(12)); card.addView(detail);
+                    + group.completeCount + " 份", 12, MUTED);
+                detail.setPadding(0, dp(7), 0, 0); card.addView(detail);
+                DownloadProgressView progress = new DownloadProgressView(this, accentColor);
+                progress.bind(group.items, "本番下载总进度"); progress.setTag("download-group-progress:" + group.id); card.addView(progress);
                 TextView watched = text(offlineLastWatched(group), 12, TEXT);
                 watched.setPadding(0, 0, 0, dp(10)); card.addView(watched);
                 if (downloadSelectionMode) {
@@ -2179,11 +2181,8 @@ public final class MainActivity extends Activity {
         TextView name = text(episodeTitle, 16, TEXT);
         name.setTypeface(null, Typeface.BOLD); card.addView(name);
         card.addView(text(entry.quality.label + "  ·  " + entry.status, 12, AQUA));
-        String size = android.text.format.Formatter.formatShortFileSize(this, entry.bytesDownloaded);
-        if (entry.totalBytes >= 0) size += " / " + android.text.format.Formatter.formatShortFileSize(this, entry.totalBytes);
-        else if (!entry.complete) size += " / 总大小待获取";
-        if (entry.percent >= 0 && !entry.complete) size += String.format(Locale.CHINA, " · %.0f%%", entry.percent);
-        card.addView(text(size, 12, MUTED));
+        DownloadProgressView progress = new DownloadProgressView(this, accentColor);
+        progress.bind(entry); progress.setTag("download-progress:" + entry.key); card.addView(progress);
         TextView watched = text(watchProgress(entry.episode.id), 13, TEXT);
         watched.setPadding(0, dp(7), 0, dp(7));
         watched.setContentDescription("离线观看进度：" + entry.episode.id); card.addView(watched);
