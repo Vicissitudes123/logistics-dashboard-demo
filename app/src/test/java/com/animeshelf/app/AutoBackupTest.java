@@ -55,7 +55,7 @@ public class AutoBackupTest {
         assertEquals(2, provider.deleted.size()); assertTrue(config.getLong("last", 0) > 0);
         for (String recorded : AutoBackup.recordedFiles(config.getString("files", "[]"))) {
             String id = DocumentsContract.getDocumentId(Uri.parse(recorded));
-            LibraryBackup.inspect(Files.readString(provider.files.get(id).toPath()));
+            LibraryBackup.inspect(new String(Files.readAllBytes(provider.files.get(id).toPath()), java.nio.charset.StandardCharsets.UTF_8));
         }
     }
     @Test public void corruptReadbackDoesNotRotateOrReplaceLastSuccessfulBackup() throws Exception {
@@ -91,7 +91,7 @@ public class AutoBackupTest {
             File file = files.get(DocumentsContract.getDocumentId(uri));
             if (file == null || (rejectWrite && mode.contains("w"))) throw new java.io.FileNotFoundException();
             if (corruptRead && "r".equals(mode)) {
-                try { File corrupt = File.createTempFile("corrupt", ".json", getContext().getCacheDir()); Files.writeString(corrupt.toPath(), "broken"); file = corrupt; }
+                try { File corrupt = File.createTempFile("corrupt", ".json", getContext().getCacheDir()); Files.write(corrupt.toPath(), "broken".getBytes(java.nio.charset.StandardCharsets.UTF_8)); file = corrupt; }
                 catch (java.io.IOException failure) { throw new java.io.FileNotFoundException(); }
             }
             return ParcelFileDescriptor.open(file, ParcelFileDescriptor.parseMode(mode));

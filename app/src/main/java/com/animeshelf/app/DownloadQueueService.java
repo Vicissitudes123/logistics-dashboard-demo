@@ -73,22 +73,32 @@ public final class DownloadQueueService extends Service {
             } catch (Exception error) { failure = "解析未完成，请检查网络或登录后重试"; }
             Models.Quality ready = quality; String error = failure;
             handler.post(() -> {
-                busy = false;
                 if (dead) return;
                 if (PendingDownloads.contains(this, job.id)) {
                     String result = error;
                     try {
                         if (result.isEmpty()) {
                             MediaRepository.OfflineItem existing = DownloadCatalogue.existing(repository.downloads(), job.episode, ready);
-                            if (existing == null || existing.failed || existing.state == DownloadStatus.State.ADDING) repository.enqueue(job.episode, ready);
-                            added++;
+                            if (existing == null || existing.failed || !repository.hasTracks(existing.episode, existing.quality)) repository.enqueue(job.episode, ready);
+                            Models.Quality stored = existing != null && !existing.failed && repository.hasTracks(existing.episode, existing.quality) ? existing.quality : ready;
+                            awaitAccepted(job, stored, 0); return;
                         }
                     } catch (Exception failed) { result = DownloadStatus.safeFailure(failed); }
                     PendingDownloads.finish(this, job.id, result);
                 }
-                handler.postDelayed(pump, 350);
+                busy = false; handler.postDelayed(pump, 350);
             });
         });
+    }
+    /** Ack only after both track requests are present; a process death before this keeps the journal entry. */
+    private void awaitAccepted(PendingDownloads.Job job, Models.Quality quality, int attempts) {
+        if (dead) return;
+        if (!PendingDownloads.contains(this, job.id)) { busy = false; handler.post(pump); return; }
+        if (MediaRepository.get(this).hasTracks(job.episode, quality)) {
+            PendingDownloads.finish(this, job.id, ""); added++; busy = false; handler.postDelayed(pump, 350);
+        } else if (attempts >= 100) {
+            PendingDownloads.finish(this, job.id, "下载器尚未确认任务，请点击继续 / 重试"); busy = false; handler.post(pump);
+        } else handler.postDelayed(() -> awaitAccepted(job, quality, attempts + 1), 300);
     }
     @Override public void onTimeout(int startId, int type) { stopSelf(); }
     @Override public void onDestroy() { dead = true; handler.removeCallbacksAndMessages(null); io.shutdownNow(); if (wake != null && wake.isHeld()) wake.release(); super.onDestroy(); }

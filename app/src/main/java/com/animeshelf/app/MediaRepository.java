@@ -407,6 +407,10 @@ public final class MediaRepository {
             ? "旧任务未保存 HTTP 详情，请重新解析重试后查看。" : failure);
     }
     private boolean failed(Download d) { return d != null && d.state == Download.STATE_FAILED; }
+    boolean hasTracks(Models.Episode e, Models.Quality q) {
+        String key = key(e, q);
+        return track(key + ":v") != null && (!hasAudio(q) || track(key + ":a") != null);
+    }
     public boolean isDownloaded(Models.Episode e, Models.Quality q) {
         String key = key(e, q);
         return complete(track(key + ":v")) && (!hasAudio(q) || complete(track(key + ":a")));
