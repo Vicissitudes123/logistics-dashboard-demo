@@ -2,9 +2,16 @@
 
 原生安卓测试版，Android 8.0（API 26）及以上。中文界面，视频、账号会话和观看记录保存在设备本地，不需要部署服务器。
 
-[下载 0.1.11 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/abc68be6c51e34c904e9d85aa475bc078d3c6ce2/downloads/anime-shelf-0.1.11-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/abc68be6c51e34c904e9d85aa475bc078d3c6ce2/downloads/anime-shelf-0.1.11.apk)。已核对与旧版签名一致，可覆盖安装保留片库、离线文件与观看记录，不要先卸载旧版。
+[下载 0.1.12 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/839b88bbeb246179ccf02a7bba0de63f308bac1b/downloads/anime-shelf-0.1.12-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/839b88bbeb246179ccf02a7bba0de63f308bac1b/downloads/anime-shelf-0.1.12.apk)。签名与旧版一致，可直接覆盖安装保留数据，不要先卸载旧版。
 
-**当前交付为 0.1.11。** 新增后台批量任务、单集下载控制、存储清理、自动备份、新集刷新和定时停止。132 项解析断言与 332 项 JUnit/Robolectric 测试通过，编译、Lint、签名及公开下载文件已核对；详情见 [BUILD_STATUS.md](BUILD_STATUS.md)。小米 14 上的真实锁屏下载与文件夹备份仍需安装验证。
+**当前交付为 0.1.12。** 离线下载新增单集和番剧分组进度条，显示百分比与已下载大小。132 项解析断言、335 项 JUnit/Robolectric 测试通过，编译、Lint、签名及公开下载文件已核对；见 [BUILD_STATUS.md](BUILD_STATUS.md)。
+
+## 0.1.12 下载进度条
+
+- 单集卡片显示 8dp 圆角进度条、百分比及已下载 / 总大小，保留下载速度、预计剩余时间和观看记录。
+- 番剧分组卡片显示已加入任务的合计进度，按视频与音轨实际字节加权，不按各集百分比简单平均。
+- 总大小未知时不显示百分比；正在传输时显示获取大小的活动提示，暂停、排队、等待网络或失败时停止活动动画。已知进度继续保留。
+- 下载中跟随主题色，暂停和等待为灰色、失败为红色、完成为绿色。音画真正完成前最高显示 99%，完成后显示 100%。
 
 ## 0.1.11 下载与数据管理
 
