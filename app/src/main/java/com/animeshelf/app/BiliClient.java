@@ -109,6 +109,22 @@ public final class BiliClient {
     }
 
     /** Fetch only a missing cover for an old catalogue entry; never replaces its metadata or episodes. */
+    /** Refresh a previously imported public catalogue, without changing its identity. */
+    public Series refreshSeries(Series series) throws Exception {
+        String source = series.id;
+        if (!source.matches("ss[0-9]+|BV[0-9A-Za-z]{10}")) {
+            source = "";
+            for (Episode episode : series.episodes) {
+                if (episode.bangumi && episode.id.matches("ep[0-9]+")) { source = episode.id; break; }
+                if (episode.bvid.matches("BV[0-9A-Za-z]{10}")) { source = episode.bvid; break; }
+            }
+        }
+        if (source.isEmpty()) throw new ClientException("本地导入视频无需联网刷新");
+        Series fresh = resolve(source);
+        if (!series.id.equals(fresh.id)) throw new ClientException("返回了不同番剧，未改动本机片库");
+        return fresh;
+    }
+
     public String resolveCover(Series series) throws Exception {
         String endpoint = coverEndpoint(series);
         if (endpoint.isEmpty()) return "";

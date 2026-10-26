@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 env:
-  EXPECTED_APK_VERSION: '0.1.10'
-  EXPECTED_APK_VERSION_CODE: '11'
+  EXPECTED_APK_VERSION: '0.1.11'
+  EXPECTED_APK_VERSION_CODE: '12'
   EXPECTED_APK_CERTIFICATE_SHA256: '0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c'
 
 jobs:
@@ -234,12 +234,12 @@ jobs:
               'apkBytes': len(payload),
               'zipBytes': archive_target.stat().st_size,
               'notes': [
-                  '竖屏控制集中到底部，倍速、选集和画面设置移入更多菜单。',
-                  '多选下载和删除操作固定在底部，滚动列表仍可操作。',
-                  '离线页显示最近观看与每集进度，断网也能续播。',
-                  '封面使用原始图片并提高解码精度，修复放大后的模糊。',
-                  '有完整离线视频时优先播放已下载版本。',
-                  '单集与批量下载前显示音视频所需空间、估算说明及可用容量。',
+                  '批量下载确认后交由后台服务，队列保存在本机，可恢复未处理任务。',
+                  '单集暂停、继续与优先下载；音轨和视频同步控制。',
+                  '存储清理按番剧占用排序，可筛选已看完与多个版本，删除保留记录。',
+                  '选择手机文件夹后自动备份片库、进度和设置，保留最近 7 份。',
+                  '刷新已导入番剧并标记新增集数，不删除本机旧剧集或观看记录。',
+                  '新增 15、30、60 分钟及本集结束后停止，优先于自动连播。',
               ],
               'sourceCommit': source_commit,
           }

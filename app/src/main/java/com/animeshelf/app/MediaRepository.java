@@ -52,6 +52,7 @@ public final class MediaRepository {
     private final DefaultDataSource.Factory upstream;
     private final DownloadNetworkPolicy networkPolicy;
     private final SharedPreferences policyPreferences;
+    private final DownloadControls controls;
     private volatile boolean manuallyPaused;
     private volatile boolean released;
     private int appliedPolicyStopReason = Integer.MIN_VALUE;
@@ -65,7 +66,7 @@ public final class MediaRepository {
         public String key, episodeId, title, qualityLabel, status, errorDetail;
         public Models.Episode episode;
         public Models.Quality quality;
-        public boolean complete, failed, paused, queued, downloading, waitingForNetwork, waitingForWifi;
+        public boolean complete, failed, paused, queued, downloading, waitingForNetwork, waitingForWifi, priority;
         public DownloadStatus.State state;
         public DownloadStatus.FailureKind failureKind = DownloadStatus.FailureKind.NONE;
         public float percent;
@@ -77,6 +78,7 @@ public final class MediaRepository {
         this.context = context;
         store = new Store(context);
         policyPreferences = context.getSharedPreferences("anime_download_policy", Context.MODE_PRIVATE);
+        controls = new DownloadControls(policyPreferences);
         manuallyPaused = policyPreferences.getBoolean("manually_paused", false);
         networkPolicy = new DownloadNetworkPolicy(context, store::isWifiOnlyDownloads,
             telemetryHandler, this::applyDownloadNetworkPolicy);
@@ -111,15 +113,16 @@ public final class MediaRepository {
                     // A network change can race the final read. Keep the task resumable instead
                     // of making a deliberate policy stop look like a permanent download failure.
                     if (isSavedDownloadRequest(download.request.id))
-                        manager.addDownload(download.request, currentPolicyStopReason());
+                        manager.addDownload(download.request, trackStopReason(download.request.id));
                     scheduleNetworkPolicyApply();
                     return;
                 }
                 if (finalException != null) store.saveDownloadError(download.request.id, DownloadStatus.safeFailure(finalException));
                 else if (download.state == Download.STATE_COMPLETED) store.clearDownloadError(download.request.id);
+                releaseFinishedPriority();
                 sampleTelemetry();
             }
-            @Override public void onInitialized(DownloadManager downloadManager) { applyDownloadNetworkPolicy(); sampleTelemetry(); }
+            @Override public void onInitialized(DownloadManager downloadManager) { releaseFinishedPriority(); applyDownloadNetworkPolicy(); sampleTelemetry(); }
             @Override public void onDownloadsPausedChanged(DownloadManager downloadManager, boolean downloadsPaused) { sampleTelemetry(); }
         });
         networkPolicy.start();
@@ -133,10 +136,12 @@ public final class MediaRepository {
         if (released) return;
         if (Looper.myLooper() != Looper.getMainLooper()) { scheduleNetworkPolicyApply(); return; }
         int reason = currentPolicyStopReason();
-        if (appliedPolicyStopReason != reason) {
-            appliedPolicyStopReason = reason;
-            manager.setStopReason(null, reason);
-            telemetry.clear();
+        if (appliedPolicyStopReason != reason) { appliedPolicyStopReason = reason; telemetry.clear(); }
+        for (JSONObject saved : store.savedDownloads()) {
+            String key = saved.optString("key");
+            int stop = controls.reason(key, reason);
+            manager.setStopReason(key + ":v", stop);
+            manager.setStopReason(key + ":a", stop);
         }
         // Deliberately never call resumeDownloads here: reconnecting must not undo a user pause.
     }
@@ -251,13 +256,15 @@ public final class MediaRepository {
     private void addTrack(String id, String url) {
         DownloadRequest request = new DownloadRequest.Builder(id, Uri.parse(url))
             .setMimeType("video/mp4").setCustomCacheKey(id).build();
-        DownloadService.sendAddDownload(context, AnimeDownloadService.class, request, currentPolicyStopReason(), true);
+        DownloadService.sendAddDownload(context, AnimeDownloadService.class, request, trackStopReason(id), true);
     }
+    public boolean isManuallyPaused() { return manuallyPaused; }
     public void pauseAll() {
         markManuallyPaused(true);
         DownloadService.sendPauseDownloads(context, AnimeDownloadService.class, false);
     }
     public void resumeAll() {
+        controls.resumeAll();
         markManuallyPaused(false);
         DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true);
     }
@@ -271,10 +278,44 @@ public final class MediaRepository {
         telemetry.clear();
         applyDownloadNetworkPolicy();
     }
+    private int trackStopReason(String id) {
+        return controls.reason(id.endsWith(":v") || id.endsWith(":a") ? id.substring(0, id.length() - 2) : id, currentPolicyStopReason());
+    }
+    public void pause(OfflineItem item) {
+        controls.pause(item.key, true); applyDownloadNetworkPolicy();
+    }
+    public void resume(OfflineItem item) {
+        // Resuming one item after "pause all" keeps every other unfinished item paused.
+        if (manuallyPaused) {
+            for (OfflineItem other : downloads()) if (!other.complete && !other.key.equals(item.key)) controls.pause(other.key, true);
+            manuallyPaused = false; policyPreferences.edit().putBoolean("manually_paused", false).apply();
+        }
+        controls.pause(item.key, false); applyDownloadNetworkPolicy();
+        DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true);
+    }
+    public void prioritize(OfflineItem item) {
+        if (item.complete || item.failed) return;
+        resume(item); controls.prioritize(item.key); applyDownloadNetworkPolicy();
+    }
+    public void clearPriority() { controls.clearPriority(); applyDownloadNetworkPolicy(); }
+    private void releaseFinishedPriority() {
+        String key = controls.priority();
+        if (key.isEmpty()) return;
+        for (JSONObject saved : store.savedDownloads()) if (key.equals(saved.optString("key"))) {
+            Models.Quality q = Models.Quality.fromJson(saved.optJSONObject("quality"));
+            Download v = track(key + ":v"), a = hasAudio(q) ? track(key + ":a") : null;
+            if (!(complete(v) && (!hasAudio(q) || complete(a))) && !failed(v) && !failed(a)) return;
+            break;
+        }
+        controls.clearPriority(); applyDownloadNetworkPolicy();
+    }
     public void remove(OfflineItem item) {
+        PendingDownloads.cancel(context, item.episode, item.quality);
+        controls.forget(item.key);
         DownloadService.sendRemoveDownload(context, AnimeDownloadService.class, item.key + ":v", true);
         if (hasAudio(item.quality)) DownloadService.sendRemoveDownload(context, AnimeDownloadService.class, item.key + ":a", true);
         store.deleteDownload(item.key);
+        applyDownloadNetworkPolicy();
         telemetry.forget(item.key + ":v"); telemetry.forget(item.key + ":a");
     }
     private boolean hasAudio(Models.Quality quality) { return quality.audioUrl != null && !quality.audioUrl.isEmpty(); }
@@ -300,12 +341,18 @@ public final class MediaRepository {
                 DownloadStatus.Snapshot snapshot = DownloadStatus.summarize(video, audio, audioNeeded,
                     manuallyPaused || manager.getDownloadsPaused(), manager.getNotMetRequirements());
                 item.state = snapshot.state;
-                if (!manuallyPaused && network.wifiOnly && !network.allowed
+                if (!manuallyPaused && !controls.paused(item.key) && network.wifiOnly && !network.allowed
                     && item.state != DownloadStatus.State.COMPLETED && item.state != DownloadStatus.State.FAILED
                     && item.state != DownloadStatus.State.REMOVING) {
                     item.state = DownloadStatus.State.WAITING_NETWORK;
                     item.waitingForWifi = true;
                 }
+                boolean priorityWaiting = !controls.priority().isEmpty() && !controls.priority().equals(item.key)
+                    && !manuallyPaused && !controls.paused(item.key) && network.allowed
+                    && item.state != DownloadStatus.State.COMPLETED && item.state != DownloadStatus.State.FAILED
+                    && item.state != DownloadStatus.State.REMOVING;
+                if (priorityWaiting) item.state = DownloadStatus.State.QUEUED;
+                item.priority = controls.priority().equals(item.key);
                 item.complete = item.state == DownloadStatus.State.COMPLETED;
                 item.failed = item.state == DownloadStatus.State.FAILED;
                 item.paused = item.state == DownloadStatus.State.PAUSED;
@@ -324,6 +371,8 @@ public final class MediaRepository {
                 item.estimatedRemainingSeconds = item.complete ? 0 : item.downloading
                     ? DownloadTelemetry.remainingSeconds(item.totalBytes, item.bytesDownloaded, item.bytesPerSecond) : -1;
                 item.status = DownloadStatus.label(item.state);
+                if (priorityWaiting) item.status = "等待优先集下载";
+                if (item.priority) item.status += " · 优先下载";
                 if (item.waitingForWifi) item.status = "等待 Wi-Fi · 自动继续下载";
                 if (item.failed) item.status += " · " + DownloadStatus.failureSummary(item.failureKind);
                 items.add(item);

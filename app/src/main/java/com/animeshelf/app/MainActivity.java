@@ -80,7 +80,7 @@ public final class MainActivity extends Activity {
     private int accentColor = 0xFF8DB7FF;
     private static final int AQUA = Color.rgb(119, 224, 210);
     private static final int PICK_VIDEO = 101;
-    private static final int EXPORT_BACKUP = 103, IMPORT_BACKUP = 104;
+    private static final int EXPORT_BACKUP = 103, IMPORT_BACKUP = 104, AUTO_BACKUP_FOLDER = 105;
     private static final int MAX_BACKUP_BYTES = 4 * 1024 * 1024;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -140,7 +140,14 @@ public final class MainActivity extends Activity {
     private PlayerFactory playerFactory = () -> new ExoPlayer.Builder(this).build();
     interface UpdateResolver { UpdateChecker.Release check(int currentCode, int sdk) throws Exception; }
     private UpdateResolver updateResolver = UpdateChecker::check;
-    private boolean updateChecking;
+    private boolean updateChecking, refreshingSeries;
+    private AutoBackup autoBackup;
+    private final SleepTimer sleepTimer = new SleepTimer();
+    private final Runnable sleepTick = new Runnable() { @Override public void run() {
+        if (dead) return;
+        if (sleepTimer.consumeTime(android.os.SystemClock.elapsedRealtime())) stopForSleepTimer();
+        handler.postDelayed(this, 1000);
+    }};
     private boolean playbackChoicePending;
     private AlertDialog playbackQualityDialog;
     private final SkipPlaybackPolicy skipPolicy = new SkipPlaybackPolicy();
@@ -176,11 +183,13 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(BG);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         media = MediaRepository.get(this);
+        autoBackup = AutoBackup.get(this);
         coverLoader = new CoverLoader(this);
         seekPreviewLoader = new SeekPreviewLoader();
         buildUi();
-        handler.post(ticker);
+        handler.post(ticker); handler.post(sleepTick);
         renderLibrary();
+        if (getIntent().getBooleanExtra("openDownloads", false)) openDownloads();
     }
 
     private void buildUi() {
@@ -366,6 +375,8 @@ public final class MainActivity extends Activity {
         libraryFilters = row(); libraryFilters.setPadding(dp(3), dp(3), dp(3), dp(3));
         libraryFilters.setBackground(background(PANEL, 16)); content.addView(libraryFilters, gapLayout());
         renderLibraryFilters();
+        Button refresh = button("刷新番剧 · 检查新集", false, v -> refreshSeries(store.listVisibleSeries()));
+        refresh.setContentDescription("刷新全部番剧"); content.addView(refresh, gapLayout());
         libraryResults = column(); content.addView(libraryResults);
         libraryLayoutWidth = availableLibraryWidth();
         libraryResults.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
@@ -480,7 +491,7 @@ public final class MainActivity extends Activity {
         boolean watched = store.isSeriesWatched(entry);
         String detail = entry.episodes.size() + " 集" + (watched ? " · 已看完" : lastId == null || lastId.isEmpty() ? " · 未开始" : " · 观看中")
             + (store.isPinned(entry.id) ? " · 已置顶" : "");
-        TextView subtitle = text(detail, 11, MUTED); subtitle.setPadding(0, dp(7), 0, dp(8)); labels.addView(subtitle);
+        TextView subtitle = text(detail + newEpisodeBadge(entry), 11, MUTED); subtitle.setPadding(0, dp(7), 0, dp(8)); labels.addView(subtitle);
         if (episode != null && lastId != null && !lastId.isEmpty()) {
             Store.Progress progress = store.getProgress(episode.id);
             TextView position = text("第 " + episode.index + " 集  ·  " + time(progress.positionMs), 12, TEXT);
@@ -527,7 +538,7 @@ public final class MainActivity extends Activity {
             if (resume == null && !entry.episodes.isEmpty()) resume = entry.episodes.get(0);
             LinearLayout detailRow = row();
             String metadata = entry.episodes.size() + " 集 · " + (store.isSeriesWatched(entry) ? "已看完" : started ? "观看中" : "未开始");
-            TextView detail = text(metadata, 11, MUTED); detail.setPadding(dp(3), 0, 0, 0); detail.setMaxLines(2);
+            TextView detail = text(metadata + newEpisodeBadge(entry), 11, MUTED); detail.setPadding(dp(3), 0, 0, 0); detail.setMaxLines(2);
             detailRow.addView(detail, new LinearLayout.LayoutParams(0, -2, 1));
             ImageView more = homeIconButton(HomeArtwork.Symbol.MORE, "管理番剧：" + entry.id, v -> showLibraryActions(entry));
             detailRow.addView(more, new LinearLayout.LayoutParams(dp(40), dp(42))); card.addView(detailRow);
@@ -635,11 +646,12 @@ public final class MainActivity extends Activity {
         dismissLibraryKeyboard();
         new AlertDialog.Builder(this).setTitle(series.title)
             .setItems(new String[]{store.isPinned(series.id) ? "取消置顶" : "置顶", "从首页移除",
-                store.isSeriesWatched(series) ? "标记为未看完" : "标记为已看完"}, (dialog, index) -> {
+                store.isSeriesWatched(series) ? "标记为未看完" : "标记为已看完", "刷新剧集"}, (dialog, index) -> {
                 if (index == 0) {
                     store.setPinned(series.id, !store.isPinned(series.id)); renderLibraryResults();
                 } else if (index == 1) confirmHideSeries(series);
-                else { store.setSeriesWatched(series.id, !store.isSeriesWatched(series)); renderLibraryResults(); }
+                else if (index == 2) { store.setSeriesWatched(series.id, !store.isSeriesWatched(series)); renderLibraryResults(); }
+                else refreshSeries(java.util.Collections.singletonList(series));
             }).setNegativeButton("取消", null).show();
     }
 
@@ -694,6 +706,10 @@ public final class MainActivity extends Activity {
             + "\n首次观看新番时优先使用。每部番剧会单独沿用上次成功播放的画质和在线 / 离线模式。", "画质偏好设置", this::chooseQualityPreference);
         settingRow("仅 Wi-Fi 下载", (store.isWifiOnlyDownloads() ? "已开启 · 切到移动网络后等待 Wi-Fi" : "已关闭 · 允许使用移动数据下载")
             + "\n" + media.downloadNetworkInfo().summary, "仅Wi-Fi下载设置", this::chooseDownloadNetwork);
+        settingRow("定时停止", sleepTimer.label(android.os.SystemClock.elapsedRealtime()), "定时停止设置", this::chooseSleepTimer);
+        settingRow("自动备份", autoBackup.status(), "自动备份设置", this::automaticBackupMenu);
+        settingRow("存储清理", "按占用排序，筛选已看完视频与多个版本；保留观看记录", "存储清理", () -> StorageCleanup.show(this, store, media, this::confirmRemoveDownloads));
+        settingRow("刷新番剧", "检查已导入番剧的新集，保留本机观看进度", "刷新番剧设置", () -> refreshSeries(store.listVisibleSeries()));
         settingRow("检查更新", "当前版本 " + installedVersionName() + " · 查看新版说明与安装包", "检查更新", this::checkForUpdates);
         settingRow("导出片库备份", "保存番剧、观看进度、置顶和设置；不含账号与视频文件。", "导出片库备份", this::exportBackupMenu);
         settingRow("从备份恢复", "合并片库并保留本机较新进度；导入前可查看摘要。", "从备份恢复", this::importBackupMenu);
@@ -709,6 +725,106 @@ public final class MainActivity extends Activity {
         settingRow("重置外观和播放设置", "恢复默认蓝色、1.0× 常用倍速、2.0× 长按加速及 3.5 秒自动隐藏", "重置设置", this::confirmResetSettings);
         TextView note = text("番匣 " + installedVersionName() + "\n设置仅保存在本机。重置设置不会清除番剧、置顶、下载、观看记录或登录状态。", 12, MUTED);
         note.setPadding(dp(6), dp(8), dp(6), dp(16)); content.addView(note);
+    }
+
+    private void stopForSleepTimer() {
+        autoNextQueued = false;
+        // Invalidate any next-episode resolution already queued at the deadline.
+        ++selectionToken; playbackNavigationToken = selectionToken;
+        if (player != null) { player.pause(); savePosition(); playerOverlay.showControls(); }
+        notice("定时停止已生效，观看进度已保存");
+    }
+
+    private void chooseSleepTimer() {
+        new AlertDialog.Builder(this).setTitle("定时停止 · " + sleepTimer.label(android.os.SystemClock.elapsedRealtime()))
+            .setItems(new String[]{"15 分钟后停止", "30 分钟后停止", "60 分钟后停止", "本集结束后停止", "关闭定时停止"}, (dialog, which) -> {
+                if (which < 3) sleepTimer.minutes(new int[]{15, 30, 60}[which], android.os.SystemClock.elapsedRealtime());
+                else if (which == 3) sleepTimer.afterEpisode(); else sleepTimer.cancel();
+                notice(which == 4 ? "已关闭定时停止" : sleepTimer.label(android.os.SystemClock.elapsedRealtime()) + "，优先于自动连播");
+                if (settingsPage) renderSettings();
+            }).setNegativeButton("取消", null).show();
+    }
+
+    private void automaticBackupMenu() {
+        new AlertDialog.Builder(this).setTitle("自动备份")
+            .setItems(autoBackup.enabled() ? new String[]{"立即备份", "更换备份文件夹", "关闭自动备份"} : new String[]{"选择备份文件夹"}, (dialog, which) -> {
+                if (autoBackup.enabled() && which == 0) { savePosition(); autoBackup.requestNow(); notice("正在备份，可稍后在设置查看结果"); }
+                else if (autoBackup.enabled() && which == 2) { autoBackup.disable(); renderSettings(); }
+                else {
+                    Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+                    try { startActivityForResult(pick, AUTO_BACKUP_FOLDER); }
+                    catch (Exception failure) { error("无法选择文件夹", "请检查系统文件管理器是否可用"); }
+                }
+            }).setNegativeButton("取消", null).show();
+    }
+
+    private String newEpisodeBadge(Models.Series series) {
+        int count = store.newEpisodeCount(series.id); return count > 0 ? " · 新增 " + count + " 集" : "";
+    }
+
+    private void refreshSeries(List<Models.Series> series) {
+        if (refreshingSeries) { notice("正在检查新集，请稍候"); return; }
+        if (series.isEmpty()) { notice("暂无可刷新的番剧"); return; }
+        refreshingSeries = true;
+        final String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
+        final List<Models.Series> snapshot = new ArrayList<>(series);
+        notice("正在检查新集，完成后会显示新增数量");
+        io.execute(() -> {
+            List<Models.Series> results = new ArrayList<>(); int failed = 0, skipped = 0;
+            for (Models.Series entry : snapshot) {
+                boolean online = false; for (Models.Episode episode : entry.episodes) online |= downloadable(episode);
+                if (!online) { skipped++; continue; }
+                try { results.add(new BiliClient(cookie).refreshSeries(entry)); }
+                catch (Exception failure) { failed++; }
+                if (Thread.currentThread().isInterrupted()) return;
+            }
+            int errors = failed, local = skipped;
+            handler.post(() -> {
+                refreshingSeries = false; if (dead) return;
+                int added = 0, failedMerge = 0;
+                for (Models.Series fresh : results) try { added += store.mergeRefreshedSeries(fresh); } catch (RuntimeException failure) { failedMerge++; }
+                if (settingsPage) renderSettings();
+                else if (seriesPage && currentSeries != null) {
+                    Models.Series latest = findSeries(currentSeries.id);
+                    if (latest != null) { int y = scroll.getScrollY(); renderSeriesContent(latest); scroll.scrollTo(0, y); if (player != null) playbackNavigationToken = selectionToken; }
+                } else if (!downloadsPage && libraryResults != null) renderLibraryResults();
+                error("刷新完成", "新增 " + added + " 集 · 刷新成功 " + (results.size() - failedMerge) + " 部"
+                    + (errors + failedMerge > 0 ? "\n未完成 " + (errors + failedMerge) + " 部，可检查网络后重试" : "")
+                    + (local > 0 ? "\n跳过本地视频 " + local + " 部" : "") + "\n观看进度和离线视频已保留。");
+            });
+        });
+    }
+
+    private void requestDownloadNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                && !getPreferences(MODE_PRIVATE).getBoolean("notificationAsked", false)) {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("notificationAsked", true).apply();
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 106);
+        }
+    }
+
+    private void showPendingDownloads() {
+        List<PendingDownloads.Job> jobs = PendingDownloads.list(this);
+        StringBuilder detail = new StringBuilder("已确认的任务独立保存在本机。系统结束后台服务后，再次打开应用会继续未处理的任务。\n");
+        for (int i = 0; i < Math.min(jobs.size(), 20); i++) {
+            PendingDownloads.Job job = jobs.get(i);
+            detail.append("\n第 ").append(job.episode.index).append(" 集 · ").append(job.profile.label).append(" · ")
+                .append(job.error.isEmpty() ? "等待加入" : job.error);
+        }
+        new AlertDialog.Builder(this).setTitle("后台批量任务 · " + jobs.size() + " 集").setMessage(detail.toString())
+            .setPositiveButton("继续 / 重试", (d, w) -> {
+                try { PendingDownloads.retry(this); media.resumeAll(); DownloadQueueService.start(this); renderDownloads(); }
+                catch (Exception failure) { error("暂时无法启动", "队列已保留，请稍后重新打开应用重试。"); }
+            }).setNeutralButton("停止未加入的任务", (d, w) -> new AlertDialog.Builder(this).setTitle("停止后台排队？")
+                .setMessage("仅停止尚未加入下载器的任务，已加入的下载继续保留。").setNegativeButton("取消", null)
+                .setPositiveButton("停止", (a, b) -> { PendingDownloads.clear(this); renderDownloads(); }).show())
+            .setNegativeButton("关闭", null).show();
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent); setIntent(intent);
+        if (intent.getBooleanExtra("openDownloads", false)) openDownloads();
     }
 
     private void settingRow(String heading, String detail, String description, Runnable action) {
@@ -950,6 +1066,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderSeries(Models.Series series) {
+        store.markEpisodesSeen(series.id);
         dismissLibraryKeyboard(); settingsPage = false;
         clearListSelection();
         closePlayback();
@@ -1209,11 +1326,12 @@ public final class MainActivity extends Activity {
         if (player == null) return;
         playerOverlay.cancelInteraction();
         new AlertDialog.Builder(this).setTitle("播放设置")
-            .setItems(new String[]{"倍速", "选集", "画面设置"}, (dialog, which) -> {
+            .setItems(new String[]{"倍速", "选集", "画面设置", "定时停止 · " + sleepTimer.label(android.os.SystemClock.elapsedRealtime())}, (dialog, which) -> {
                 if (player == null) return;
                 if (which == 0) chooseSpeed();
                 else if (which == 1) chooseEpisodeMenu();
-                else chooseDisplayMenu();
+                else if (which == 2) chooseDisplayMenu();
+                else chooseSleepTimer();
             }).setNegativeButton("关闭", null).show();
     }
 
@@ -1398,6 +1516,7 @@ public final class MainActivity extends Activity {
 
     private void finishEpisode(ExoPlayer ended) {
         if (dead || !resumed || ended != player || currentEpisode == null || !sourceReady || autoNextQueued) return;
+        if (sleepTimer.consumeEpisodeEnd() || sleepTimer.consumeTime(android.os.SystemClock.elapsedRealtime())) { stopForSleepTimer(); return; }
         if (!store.isAutoNext()) { notice("本集已看完，可通过选集继续"); return; }
         if (selectionToken != playbackNavigationToken) return;
         Models.Episode next = PlaybackPolicy.nextEpisode(findSeries(currentEpisode.seriesId), currentEpisode);
@@ -1646,7 +1765,7 @@ public final class MainActivity extends Activity {
     private void chooseDisplayMenu() {
         new AlertDialog.Builder(this).setTitle("画面与播放")
             .setItems(new String[]{"适应画面", "铺满画面（裁切边缘）", "缩小 −", "放大 ＋", "恢复 100%", "视频信息 / HDR",
-                "本番片头片尾设置", skipPolicy.isDisabledForSession() ? "本集已取消自动跳过" : "本集不自动跳过"}, (dialog, index) -> {
+                "本番片头片尾设置", skipPolicy.isDisabledForSession() ? "本集已取消自动跳过" : "本集不自动跳过", "定时停止"}, (dialog, index) -> {
                 if (index == 0 || index == 1) {
                     zoom = 1; applyZoom();
                     playerView.setResizeMode(index == 0 ? AspectRatioFrameLayout.RESIZE_MODE_FIT : AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
@@ -1658,6 +1777,7 @@ public final class MainActivity extends Activity {
                     Models.Series series = findSeries(currentEpisode.seriesId);
                     if (series != null) showSkipSettings(series);
                 } else if (index == 7) { skipPolicy.disableForSession(); hideSkipNotice(); notice("本集不再自动跳过，下次播放仍使用本番设置"); }
+                else if (index == 8) chooseSleepTimer();
             }).setNegativeButton("关闭", null).show();
     }
 
@@ -1847,6 +1967,18 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == AUTO_BACKUP_FOLDER) {
+            if (result == RESULT_OK && data != null && data.getData() != null) {
+                Uri folder = data.getData();
+                try {
+                    int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    if ((flags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) == 0) throw new SecurityException();
+                    getContentResolver().takePersistableUriPermission(folder, flags);
+                    autoBackup.configure(folder); notice("已开启自动备份，首次完成后可在设置中查看时间");
+                } catch (Exception unavailable) { error("未能设置自动备份", "请选择允许读写的文件夹，并保留文件夹访问权限。"); }
+            }
+            renderSettings(); return;
+        }
         if (request == EXPORT_BACKUP || request == IMPORT_BACKUP) {
             if (result == RESULT_OK && data != null) handleBackupResult(request, data.getData());
             return;
@@ -2012,6 +2144,12 @@ public final class MainActivity extends Activity {
         if (measured) summary += " · " + android.text.format.Formatter.formatShortFileSize(this, speed) + "/s";
         summary += "\n" + media.downloadNetworkInfo().summary + (store.isWifiOnlyDownloads() ? "" : " · 已允许移动数据下载");
         if (available >= 0 && available < 200L * 1024 * 1024) summary += "\n可用空间较少，可删除不再需要的离线视频。";
+        List<PendingDownloads.Job> pending = PendingDownloads.list(this);
+        if (!pending.isEmpty()) {
+            int failedJobs = 0; for (PendingDownloads.Job job : pending) if (!job.error.isEmpty()) failedJobs++;
+            summary += "\n后台待加入 " + (pending.size() - failedJobs) + " 集 · 解析失败 " + failedJobs + " 集";
+            content.addView(button("管理后台批量任务", false, v -> showPendingDownloads()), gapLayout());
+        }
         TextView detail = text(summary, 12, MUTED); detail.setPadding(dp(4), 0, dp(4), dp(14));
         detail.setContentDescription("下载状态摘要"); content.addView(detail);
     }
@@ -2022,7 +2160,7 @@ public final class MainActivity extends Activity {
             try { media.pauseAll(); renderDownloads(); } catch (Exception e) { error("操作失败", explain(e)); }
         }));
         addEqual(actions, button("继续全部", false, v -> {
-            try { media.resumeAll(); renderDownloads(); } catch (Exception e) { error("操作失败", explain(e)); }
+            try { media.resumeAll(); DownloadQueueService.start(this); renderDownloads(); } catch (Exception e) { error("操作失败", explain(e)); }
         }));
         List<MediaRepository.OfflineItem> snapshot = new ArrayList<>(visible);
         addEqual(actions, button("批量删除", false, v -> chooseDownloadsToRemove(snapshot)));
@@ -2073,9 +2211,13 @@ public final class MainActivity extends Activity {
         if (entry.complete) addEqual(actions, button(store.getProgress(entry.episode.id).positionMs > 0 ? "继续离线观看" : "离线播放",
             true, v -> play(entry.episode, entry.quality, true)));
         else if (entry.failed) addEqual(actions, button("重新解析重试", true, v -> retryDownload(entry)));
-        else addEqual(actions, button(entry.paused ? "继续全部" : "暂停全部", false, v -> {
-            try { if (entry.paused) media.resumeAll(); else media.pauseAll(); renderDownloads(); }
+        else addEqual(actions, button(entry.paused ? "继续本集" : "暂停本集", false, v -> {
+            try { if (entry.paused) media.resume(entry); else media.pause(entry); renderDownloads(); }
             catch (Exception e) { error("操作失败", explain(e)); }
+        }));
+        if (!entry.complete && !entry.failed) addEqual(actions, button(entry.priority ? "取消优先" : "优先下载", false, v -> {
+            try { if (entry.priority) media.clearPriority(); else media.prioritize(entry); renderDownloads(); }
+            catch (Exception failure) { error("操作失败", explain(failure)); }
         }));
         if (entry.failed) addEqual(actions, button("失败详情", false, v -> new AlertDialog.Builder(this)
             .setTitle("下载失败详情").setMessage(diagnostic).setPositiveButton("知道了", null)
@@ -2292,7 +2434,7 @@ public final class MainActivity extends Activity {
                     DownloadPlan.Item item = plan.items.get(0);
                     MediaRepository.OfflineItem now = DownloadCatalogue.existing(media.downloads(), item.episode, item.quality);
                     if (now != null && !now.failed) { notice("已有相同版本的下载任务"); return; }
-                    try { media.enqueue(item.episode, item.quality); notice("已加入离线下载队列"); }
+                    try { media.enqueue(item.episode, item.quality); requestDownloadNotifications(); notice("已加入离线下载队列"); }
                     catch (Exception error) { error("无法添加下载", explain(error)); }
                 } else {
                     List<Models.Episode> episodes = new ArrayList<>(); java.util.Map<String, Models.Quality> prepared = new LinkedHashMap<>();
@@ -2329,61 +2471,13 @@ public final class MainActivity extends Activity {
 
     private void startBatchDownloads(Models.Series series, List<Models.Episode> episodes, Models.Quality profile,
                                      java.util.Map<String, Models.Quality> prepared) {
-        cancelBatchDownloads();
-        // Foreground downloads can start without notification permission. A permission
-        // activity here could pause this activity and cancel a newly created batch.
-        final String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
-        BatchDownloadSession.Gateway gateway = new BatchDownloadSession.Gateway() {
-            @Override public MediaRepository.OfflineItem existing(Models.Episode episode, Models.Quality quality) {
-                return DownloadCatalogue.existing(media.downloads(), episode, quality);
-            }
-            @Override public void resolve(Models.Episode episode, BatchDownloadSession.Result callback) {
-                Models.Quality ready = prepared.get(episode.id);
-                if (ready != null) { callback.success(java.util.Collections.singletonList(ready)); return; }
-                io.execute(() -> {
-                    try {
-                        List<Models.Quality> available = new BiliClient(cookie).qualities(episode);
-                        handler.post(() -> { if (!dead) callback.success(available); });
-                    } catch (Exception exception) {
-                        handler.post(() -> { if (!dead) callback.failure(exception); });
-                    }
-                });
-            }
-            @Override public void enqueue(Models.Episode episode, Models.Quality quality) { media.enqueue(episode, quality); }
-        };
-        batchSession = new BatchDownloadSession(episodes, profile, gateway, task -> handler.postDelayed(task, 350),
-            new BatchDownloadSession.Listener() {
-                @Override public void changed(BatchDownloadSession job) {
-                    if (batchSession != job || batchDialog == null) return;
-                    Models.Episode episode = job.current();
-                    batchDialog.setMessage("正在逐集加入下载队列 " + job.processed() + " / " + job.total()
-                        + (episode == null ? "" : "\n当前：第 " + episode.index + " 集") + "\n" + profile.label
-                        + "\n\n已加入 " + job.added() + " · 已有 " + job.skipped() + " · 缺档 " + job.unavailable() + " · 失败 " + job.failed()
-                        + "\n\n停止加入或切到后台后，已经加入的任务仍会继续下载。");
-                }
-                @Override public void finished(BatchDownloadSession job) {
-                    if (batchSession != job) return;
-                    batchSession = null;
-                    if (batchDialog != null) { batchDialog.dismiss(); batchDialog = null; }
-                    if (dead || isFinishing()) return;
-                    openDownloads(); downloadGroupId = series.id; downloadGroupTitle = series.title; renderDownloads();
-                    StringBuilder summary = new StringBuilder(job.summary()).append("\n\n已加入的任务可在离线下载页查看。");
-                    List<String> details = job.details();
-                    for (int i = 0; i < Math.min(details.size(), 20); i++) summary.append("\n").append(details.get(i));
-                    if (details.size() > 20) summary.append("\n…其余 ").append(details.size() - 20).append(" 项");
-                    error("批量处理结果", summary.toString());
-                }
-            });
-        batchDialog = new AlertDialog.Builder(this).setTitle("批量下载")
-            .setMessage("正在准备加入队列…")
-            .setNegativeButton("停止加入", (d, w) -> {
-                int added = batchSession == null ? 0 : batchSession.added();
-                cancelBatchDownloads(); notice("已停止加入，已加入的 " + added + " 项会继续下载");
-            }).create();
-        batchDialog.setCanceledOnTouchOutside(false);
-        batchDialog.setOnCancelListener(d -> cancelBatchDownloads());
-        batchDialog.show();
-        batchSession.start();
+        try {
+            int added = PendingDownloads.add(this, episodes, profile, prepared);
+            DownloadQueueService.start(this);
+            requestDownloadNotifications();
+            openDownloads(); downloadGroupId = series.id; downloadGroupTitle = series.title; renderDownloads();
+            notice("已保存 " + added + " 集后台任务，切换应用后继续处理");
+        } catch (Exception failure) { error("后台队列未能启动", "任务会保存在本机。请回到离线下载，点击管理后台批量任务重试。"); }
     }
 
     private void cancelBatchDownloads() {
@@ -2495,6 +2589,8 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         resumed = true;
+        if (autoBackup != null) autoBackup.flushSoon();
+        try { DownloadQueueService.start(this); } catch (RuntimeException ignored) { /* Journal remains available for an explicit retry. */ }
         if (resumeNavigation && player != null) playbackNavigationToken = selectionToken;
         resumeNavigation = false;
         applyPlaybackBrightness();
@@ -2519,7 +2615,8 @@ public final class MainActivity extends Activity {
         cancelBatchDownloads();
         if (playerOverlay != null) playerOverlay.setActive(false);
         restoreWindowBrightness();
-        savePosition(); if (player != null) player.pause(); super.onPause();
+        savePosition(); if (autoBackup != null) autoBackup.flushSoon();
+        if (player != null) player.pause(); super.onPause();
     }
     @Override protected void onDestroy() {
         cancelDownloadPreparation();

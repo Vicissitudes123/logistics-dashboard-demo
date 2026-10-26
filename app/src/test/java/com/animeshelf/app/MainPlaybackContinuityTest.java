@@ -355,7 +355,7 @@ public class MainPlaybackContinuityTest {
     @Test public void compactMenuKeepsSpeedEpisodeAndDisplayReachable() throws Exception {
         start(0, profile, false).ready();
         invoke("showCompactPlaybackMenu");
-        assertEquals(3, showingDialog().getListView().getAdapter().getCount());
+        assertEquals(4, showingDialog().getListView().getAdapter().getCount());
         chooseItem(1);
         assertEquals(series.episodes.size(), showingDialog().getListView().getAdapter().getCount());
     }
@@ -375,6 +375,25 @@ public class MainPlaybackContinuityTest {
         invoke("prepareDownloads", new Class<?>[]{java.util.List.class, Models.Quality.class}, series.episodes.subList(0, 2), profile);
         assertTrue(started.await(5, TimeUnit.SECONDS)); controller.pause(); release.countDown(); drainWorker();
         assertFalse(dialogShowing()); assertTrue(repository.downloads().isEmpty());
+    }
+
+    @Test public void episodeEndSleepTimerOverridesAutoNextWithoutChangingPreference() throws Exception {
+        store.setAutoNext(true); FakePlayer first = start(0, profile, false); first.ready();
+        ((SleepTimer) get("sleepTimer")).afterEpisode();
+        invoke("finishEpisode", new Class<?>[]{ExoPlayer.class}, first.player); idle();
+        assertEquals(1, created.size()); assertFalse(first.playWhenReady); assertTrue(store.isAutoNext());
+        assertEquals(0, resolveCalls.get());
+    }
+
+    @Test public void confirmedBatchSurvivesActivityPauseAndHasNoModalOwner() throws Exception {
+        java.util.Map<String, Models.Quality> prepared = new java.util.HashMap<>();
+        for (Models.Episode episode : series.episodes) prepared.put(episode.id, profile);
+        invoke("startBatchDownloads", new Class<?>[]{Models.Series.class, java.util.List.class, Models.Quality.class, java.util.Map.class},
+            series, series.episodes, profile, prepared);
+        assertEquals(3, PendingDownloads.list(activity).size());
+        controller.pause();
+        assertEquals(3, PendingDownloads.list(activity).size()); assertNull(get("batchDialog"));
+        PendingDownloads.clear(activity);
     }
 
     private FakePlayer start(int index, Models.Quality quality, boolean offline) throws Exception {

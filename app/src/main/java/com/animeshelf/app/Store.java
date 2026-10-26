@@ -84,6 +84,39 @@ public final class Store {
             return;
         }
     }
+    /** Merge current metadata by stable episode ID; a partial remote response never deletes local entries. */
+    public synchronized int mergeRefreshedSeries(Models.Series fresh) {
+        if (fresh == null || !validId(fresh.id) || fresh.episodes.isEmpty()) throw new IllegalArgumentException("刷新未返回有效剧集");
+        List<Models.Series> all = listSeries();
+        Models.Series target = null;
+        for (Models.Series series : all) if (series.id.equals(fresh.id)) target = series;
+        if (target == null) throw new IllegalArgumentException("番剧已移除，未重新导入");
+        Map<String, Models.Episode> merged = new LinkedHashMap<>();
+        for (Models.Episode episode : target.episodes) merged.put(episode.id, episode);
+        Set<String> newIds = new HashSet<>(prefs.getStringSet("newEpisodes:" + fresh.id, java.util.Collections.emptySet()));
+        int added = 0;
+        for (Models.Episode episode : fresh.episodes) {
+            if (!validId(episode.id) || !fresh.id.equals(episode.seriesId)) throw new IllegalArgumentException("剧集归属不一致");
+            Models.Episode old = merged.get(episode.id);
+            if (old != null && old.localUri != null && !old.localUri.isEmpty()) continue;
+            if (old == null) { added++; newIds.add(episode.id); }
+            merged.put(episode.id, episode);
+        }
+        target.episodes = new ArrayList<>(merged.values());
+        target.episodes.sort(java.util.Comparator.comparingInt((Models.Episode e) -> e.index).thenComparing(e -> e.id));
+        if (validId(fresh.title)) target.title = fresh.title;
+        if (!Models.safeCoverUrl(fresh.coverUrl).isEmpty()) target.coverUrl = fresh.coverUrl;
+        for (Models.Episode episode : target.episodes) episode.seriesTitle = target.title;
+        // Keep membership, manual watched flags, pinning, progress and last episode intact.
+        try {
+            JSONArray array = new JSONArray(); for (Models.Series series : all) array.put(series.toJson());
+            if (!prefs.edit().putString("series", array.toString()).putStringSet("newEpisodes:" + fresh.id, newIds).commit())
+                throw new IllegalStateException("刷新结果未能保存");
+        } catch (org.json.JSONException error) { throw new IllegalStateException(error); }
+        return added;
+    }
+    public int newEpisodeCount(String id) { return prefs.getStringSet("newEpisodes:" + id, java.util.Collections.emptySet()).size(); }
+    public void markEpisodesSeen(String id) { prefs.edit().remove("newEpisodes:" + id).apply(); }
     public synchronized void deleteSeries(String id) {
         List<Models.Series> all = listSeries();
         all.removeIf(s -> s.id.equals(id));

@@ -11,6 +11,7 @@
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
         <activity android:name=".LoginActivity" android:exported="false"/>
+        <service android:name=".DownloadQueueService" android:exported="false" android:foregroundServiceType="dataSync"/>
         <service android:name=".AnimeDownloadService" android:exported="false" android:foregroundServiceType="dataSync">
             <intent-filter><action android:name="androidx.media3.exoplayer.downloadService.action.RESTART"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
         </service>
