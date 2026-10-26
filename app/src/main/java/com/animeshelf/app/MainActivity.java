@@ -1972,8 +1972,8 @@ public final class MainActivity extends Activity {
                 Uri folder = data.getData();
                 try {
                     int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-                    if ((flags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) == 0) throw new SecurityException();
-                    getContentResolver().takePersistableUriPermission(folder, flags);
+                    if (flags != (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) throw new SecurityException();
+                    getContentResolver().takePersistableUriPermission(folder, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                     autoBackup.configure(folder); notice("已开启自动备份，首次完成后可在设置中查看时间");
                 } catch (Exception unavailable) { error("未能设置自动备份", "请选择允许读写的文件夹，并保留文件夹访问权限。"); }
             }
@@ -2590,7 +2590,7 @@ public final class MainActivity extends Activity {
         super.onResume();
         resumed = true;
         if (autoBackup != null) autoBackup.flushSoon();
-        try { DownloadQueueService.start(this); } catch (RuntimeException ignored) { /* Journal remains available for an explicit retry. */ }
+        try { media.restorePendingDownloads(); DownloadQueueService.start(this); } catch (RuntimeException ignored) { /* Journal remains available for an explicit retry. */ }
         if (resumeNavigation && player != null) playbackNavigationToken = selectionToken;
         resumeNavigation = false;
         applyPlaybackBrightness();

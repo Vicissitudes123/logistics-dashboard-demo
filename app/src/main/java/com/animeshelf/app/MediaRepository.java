@@ -258,6 +258,13 @@ public final class MediaRepository {
             .setMimeType("video/mp4").setCustomCacheKey(id).build();
         DownloadService.sendAddDownload(context, AnimeDownloadService.class, request, trackStopReason(id), true);
     }
+    /** Explicit foreground app entry restores queued transfers, without undoing user pause intent. */
+    public void restorePendingDownloads() {
+        if (manuallyPaused) return;
+        for (OfflineItem item : downloads()) if (!item.complete && !item.failed && !controls.paused(item.key)) {
+            DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true); return;
+        }
+    }
     public boolean isManuallyPaused() { return manuallyPaused; }
     public void pauseAll() {
         markManuallyPaused(true);

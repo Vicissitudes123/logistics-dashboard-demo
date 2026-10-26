@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /** Journal of explicitly confirmed work. Kept separate from backup/export and login data. */
+@androidx.media3.common.util.UnstableApi
 final class PendingDownloads {
     static final class Job {
         String id, error;

@@ -17,6 +17,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /** Debounced, verified SAF backups. Deletes only URIs recorded as created by this feature. */
+@androidx.media3.common.util.UnstableApi
 final class AutoBackup {
     private static AutoBackup instance;
     static synchronized AutoBackup get(Context context) {
