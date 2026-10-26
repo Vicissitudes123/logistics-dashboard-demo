@@ -1,22 +1,20 @@
 {
   "schemaVersion": 1,
-  "versionCode": 12,
-  "versionName": "0.1.11",
+  "versionCode": 13,
+  "versionName": "0.1.12",
   "packageName": "com.animeshelf.app",
   "minSdk": 26,
-  "apkUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.11.apk",
-  "zipUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.11-install.zip",
-  "apkSha256": "297432ab09b8cccfc03e9471192c6e18fd8f286395a1ecd30399d02e27900684",
-  "zipSha256": "01024578c7dd2bf8c2cb3d7a2158dfc4e6b50f4b4e40f68818f81c0fc235d393",
-  "apkBytes": 5069321,
-  "zipBytes": 5069463,
+  "apkUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.12.apk",
+  "zipUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.12-install.zip",
+  "apkSha256": "5dded75c59c1c1910659e71aefcd5bf76282147528b96b4f09a17b5fc82f5b57",
+  "zipSha256": "c0525b784b9cbc81359b57f4d39d81a6bce62b48c3da6c76f6f657e1d25a0e72",
+  "apkBytes": 5071037,
+  "zipBytes": 5071179,
   "notes": [
-    "批量下载确认后交由后台服务，队列保存在本机，可恢复未处理任务。",
-    "单集暂停、继续与优先下载；音轨和视频同步控制。",
-    "存储清理按番剧占用排序，可筛选已看完与多个版本，删除保留记录。",
-    "选择手机文件夹后自动备份片库、进度和设置，保留最近 7 份。",
-    "刷新已导入番剧并标记新增集数，不删除本机旧剧集或观看记录。",
-    "新增 15、30、60 分钟及本集结束后停止，优先于自动连播。"
+    "离线下载中的每集新增清晰可见的进度条，显示百分比和已下载大小。",
+    "番剧分组卡片显示本番总下载进度，按视频与音轨的实际字节合计。",
+    "暂停、等待和失败时保留已知进度；总大小未知时不显示虚假的百分比。",
+    "进度颜色跟随主题，完成与失败使用独立提示色。"
   ],
-  "sourceCommit": "21c4b66e9b6e8146245018f17206007940485027"
+  "sourceCommit": "c47b1644108af38e70ca2d2465e0665d4990c220"
 }
