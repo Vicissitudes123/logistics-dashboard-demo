@@ -37,6 +37,12 @@ public final class PlaybackGestures {
         }
     }
 
+    public static final int BRIGHTNESS = 1, VOLUME = 2, SEEK = 4, HOLD = 8, DOUBLE_TAP = 16, ALL = 31;
+    private int enabled = ALL, seekSeconds = 180;
+    public void configure(int mask, int seconds) {
+        enabled = mask >= 0 && mask <= ALL ? mask : ALL;
+        seekSeconds = seconds == 90 || seconds == 300 ? seconds : 180;
+    }
     private Mode mode = Mode.IGNORED;
     private boolean active, startsOnLeft, seekable;
     private float startX, startY, slop;
@@ -94,13 +100,15 @@ public final class PlaybackGestures {
         double dy = (double) y - startY;
         if (mode == Mode.PENDING) {
             if (Math.max(Math.abs(dx), Math.abs(dy)) <= slop) return update(false);
-            if (Math.abs(dx) >= Math.abs(dy)) mode = seekable ? Mode.SEEK : Mode.BLOCKED_SEEK;
-            else mode = startsOnLeft ? Mode.BRIGHTNESS : Mode.VOLUME;
+            if (Math.abs(dx) >= Math.abs(dy)) mode = (enabled & SEEK) == 0 ? Mode.IGNORED : seekable ? Mode.SEEK : Mode.BLOCKED_SEEK;
+            else mode = startsOnLeft ? ((enabled & BRIGHTNESS) != 0 ? Mode.BRIGHTNESS : Mode.IGNORED)
+                : ((enabled & VOLUME) != 0 ? Mode.VOLUME : Mode.IGNORED);
+            if (mode == Mode.IGNORED) active = false;
         }
 
         switch (mode) {
             case SEEK:
-                double target = initialPositionMs + dx / width * Math.min(durationMs, 180000L);
+                double target = initialPositionMs + dx / width * Math.min(durationMs, seekSeconds * 1000L);
                 // Clamp in double before rounding, so extreme coordinates cannot overflow a long.
                 previewPositionMs = Math.min(durationMs,
                     Math.max(0L, Math.round(Math.max(0d, Math.min((double) durationMs, target)))));
