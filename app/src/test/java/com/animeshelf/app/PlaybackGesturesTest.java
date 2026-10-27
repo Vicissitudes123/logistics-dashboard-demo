@@ -19,6 +19,19 @@ public class PlaybackGesturesTest {
         return gestures;
     }
 
+    @Test public void disabledAxesNeverSeekOrChangeBrightnessAndSpeedRangeIsConfigurable() {
+        PlaybackGestures gestures = new PlaybackGestures();
+        PlaybackGestures.Snapshot state = new PlaybackGestures.Snapshot(500000, 1800000, true, .5f, 5, 10);
+        gestures.configure(0, 180); gestures.begin(100, 100, 1000, 500, 20, 8, state);
+        assertEquals(PlaybackGestures.Mode.IGNORED, gestures.move(300, 100).mode); assertFalse(gestures.finish(false).commitSeek);
+        gestures.begin(100, 200, 1000, 500, 20, 8, state);
+        assertEquals(PlaybackGestures.Mode.IGNORED, gestures.move(100, 100).mode); assertEquals(.5f, gestures.finish(false).brightness, .001f);
+        gestures.configure(PlaybackGestures.SEEK, 90); gestures.begin(100, 100, 1000, 500, 20, 8, state);
+        gestures.move(300, 100); assertEquals(518000, gestures.finish(false).positionMs);
+        gestures.configure(PlaybackGestures.SEEK, 300); gestures.begin(100, 100, 1000, 500, 20, 8, state);
+        gestures.move(300, 100); assertEquals(560000, gestures.finish(false).positionMs);
+    }
+
     @Test public void smallFingerMovementRemainsATapAndDoesNotSeek() {
         PlaybackGestures gestures = start(160, 100, ready());
         gestures.move(163, 104);
