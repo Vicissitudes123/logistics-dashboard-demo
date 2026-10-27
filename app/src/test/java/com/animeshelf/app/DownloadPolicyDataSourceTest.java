@@ -58,6 +58,19 @@ public class DownloadPolicyDataSourceTest {
         assertEquals(1, upstream.closes);
     }
 
+    @Test public void lowDiskSpaceStopsAnActiveReadAndExplicitResumePreservesTheRange() throws Exception {
+        java.util.concurrent.atomic.AtomicLong free = new java.util.concurrent.atomic.AtomicLong(500_000_000L);
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong();
+        DownloadStoragePolicy policy = new DownloadStoragePolicy(org.robolectric.RuntimeEnvironment.getApplication().getSharedPreferences("guard_space", 0), free::get, clock::get);
+        FakeSource upstream = new FakeSource(); AtomicInteger blocked = new AtomicInteger();
+        DownloadPolicyDataSource source = new DownloadPolicyDataSource(upstream, policy::allowsRead, blocked::incrementAndGet);
+        source.open(request(0)); source.read(new byte[4], 0, 4); free.set(100_000_000L); clock.set(500);
+        assertThrows(DownloadPolicyDataSource.PolicyBlockedException.class, () -> source.read(new byte[4], 0, 4));
+        assertEquals(1, upstream.reads); assertEquals(1, blocked.get()); source.close();
+        free.set(500_000_000L); assertFalse(policy.allowsRead()); policy.resume(); source.open(request(4));
+        assertEquals(4, upstream.spec.position); assertEquals(4, source.read(new byte[4], 0, 4));
+    }
+
     @Test public void resumedCallerRangeAndCacheKeyAreNotRewritten() throws Exception {
         FakeSource upstream = new FakeSource();
         AtomicBoolean allowed = new AtomicBoolean(false);
