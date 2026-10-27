@@ -141,6 +141,8 @@ public final class MainActivity extends Activity {
     interface UpdateResolver { UpdateChecker.Release check(int currentCode, int sdk) throws Exception; }
     private UpdateResolver updateResolver = UpdateChecker::check;
     private boolean updateChecking, refreshingSeries;
+    private android.app.Dialog episodeSidebar;
+    private final Set<String> integrityBusy = new LinkedHashSet<>();
     private AutoBackup autoBackup;
     private final SleepTimer sleepTimer = new SleepTimer();
     private final Runnable sleepTick = new Runnable() { @Override public void run() {
@@ -271,6 +273,8 @@ public final class MainActivity extends Activity {
                 savePosition();
             }
             @Override public void setSpeed(float rate) { setPlaybackSpeed(rate); }
+            @Override public int gestureMask() { return store.getGestureMask(); }
+            @Override public int seekSeconds() { return store.getSeekSeconds(); }
             @Override public void chooseSpeed() { MainActivity.this.chooseSpeed(); }
             @Override public void chooseEpisode() { chooseEpisodeMenu(); }
             @Override public void previousEpisode() { adjacent(-1); }
@@ -706,6 +710,8 @@ public final class MainActivity extends Activity {
             + "\n首次观看新番时优先使用。每部番剧会单独沿用上次成功播放的画质和在线 / 离线模式。", "画质偏好设置", this::chooseQualityPreference);
         settingRow("仅 Wi-Fi 下载", (store.isWifiOnlyDownloads() ? "已开启 · 切到移动网络后等待 Wi-Fi" : "已关闭 · 允许使用移动数据下载")
             + "\n" + media.downloadNetworkInfo().summary, "仅Wi-Fi下载设置", this::chooseDownloadNetwork);
+        settingRow("手势设置", "独立开关、快进灵敏度 · 横滑一屏最多 " + store.getSeekSeconds() + " 秒", "手势设置", this::chooseGestures);
+        settingRow("下载空间保护", "不足 200 MB 自动暂停；清理至至少 300 MB 后手动继续", "下载空间保护", () -> StorageCleanup.show(this, store, media, this::confirmRemoveDownloads));
         settingRow("定时停止", sleepTimer.label(android.os.SystemClock.elapsedRealtime()), "定时停止设置", this::chooseSleepTimer);
         settingRow("自动备份", autoBackup.status(), "自动备份设置", this::automaticBackupMenu);
         settingRow("存储清理", "按占用排序，筛选已看完视频与多个版本；保留观看记录", "存储清理", () -> StorageCleanup.show(this, store, media, this::confirmRemoveDownloads));
@@ -1630,6 +1636,7 @@ public final class MainActivity extends Activity {
     }
 
     private void closePlayback() {
+        dismissEpisodeSidebar();
         cancelDownloadPreparation();
         autoNextQueued = false;
         dismissPlaybackQualityDialog(); playbackChoicePending = false;
@@ -1731,6 +1738,80 @@ public final class MainActivity extends Activity {
         getWindow().setAttributes(params);
     }
 
+    private void dismissEpisodeSidebar() {
+        android.app.Dialog dialog = episodeSidebar; episodeSidebar = null; if (dialog != null) dialog.dismiss();
+    }
+
+    private void chooseGestures() {
+        if (playerOverlay != null) playerOverlay.cancelInteraction();
+        LinearLayout form = column(); form.setPadding(dp(20), dp(8), dp(20), dp(8));
+        String[] names = {"左侧上下滑动调亮度", "右侧上下滑动调音量", "左右滑动调整进度", "长按临时加速", "双击播放 / 暂停"};
+        android.widget.CheckBox[] choices = new android.widget.CheckBox[names.length];
+        for (int i = 0; i < names.length; i++) {
+            android.widget.CheckBox check = new android.widget.CheckBox(this); check.setText(names[i]); check.setTextColor(TEXT); check.setMinHeight(dp(48));
+            check.setChecked((store.getGestureMask() & (1 << i)) != 0); check.setContentDescription(names[i]); choices[i] = check; form.addView(check);
+        }
+        form.addView(text("快进灵敏度 · 横滑一屏最多跳过的时间", 13, MUTED));
+        android.widget.RadioGroup sensitivity = new android.widget.RadioGroup(this);
+        int[] seconds = {90, 180, 300}; String[] labels = {"精细 · 90 秒", "标准 · 180 秒", "快速 · 300 秒"};
+        for (int i = 0; i < seconds.length; i++) {
+            android.widget.RadioButton radio = new android.widget.RadioButton(this); radio.setId(seconds[i]); radio.setText(labels[i]); radio.setTextColor(TEXT);
+            sensitivity.addView(radio); if (seconds[i] == store.getSeekSeconds()) sensitivity.check(seconds[i]);
+        }
+        form.addView(sensitivity); form.addView(text("单击控制栏、进度条和按钮仍可操作。长按的播放速度使用原来的「长按加速」设置。", 12, MUTED));
+        ScrollView wrapper = new ScrollView(this); wrapper.addView(form);
+        new AlertDialog.Builder(this).setTitle("手势设置").setView(wrapper).setNegativeButton("取消", null)
+            .setNeutralButton("恢复默认", (d, w) -> { store.setGestures(31, 180); if (settingsPage) renderSettings(); })
+            .setPositiveButton("保存", (d, w) -> {
+                int mask = 0; for (int i = 0; i < choices.length; i++) if (choices[i].isChecked()) mask |= 1 << i;
+                store.setGestures(mask, sensitivity.getCheckedRadioButtonId()); if (settingsPage) renderSettings(); notice("手势设置已保存");
+            }).show();
+    }
+
+    private void checkIntegrity(MediaRepository.OfflineItem entry) {
+        if (!integrityBusy.add(entry.key)) { notice("正在检查本集文件"); return; }
+        int generation = downloadMutationGeneration;
+        try {
+            Callable<MediaRepository.IntegrityCheck> work = media.integrityCheck(entry, false, () -> dead || generation != downloadMutationGeneration);
+            runTask("正在检查本机文件…", () -> { try { return work.call(); } finally { handler.post(() -> integrityBusy.remove(entry.key)); } }, result -> {
+                if (!downloadExists(entry.key) || generation != downloadMutationGeneration) return;
+                if (downloadsPage) renderDownloads();
+                AlertDialog.Builder dialog = new AlertDialog.Builder(this).setTitle("离线文件检查").setMessage(result.summary()
+                    + "\n\n本次只读取本机文件。首次校验建立本机摘要，无法判断此前已经存在的内容损坏，也不等于解码兼容性检查。")
+                    .setNegativeButton("关闭", null);
+                if (!result.ok()) dialog.setPositiveButton("修复本集", (d, w) -> confirmRepair(entry));
+                dialog.show();
+            });
+        } catch (Exception failure) { integrityBusy.remove(entry.key); error("无法检查", "请等待本集下载完成后再检查。"); }
+    }
+
+    private void confirmRepair(MediaRepository.OfflineItem entry) {
+        new AlertDialog.Builder(this).setTitle("修复这一集的离线文件？")
+            .setMessage("重新获取相同画质地址，删除异常缓存并补下缺失部分，保留正常数据和观看记录。若源文件已更换，则重新下载本集。下载遵循仅 Wi-Fi 设置。")
+            .setNegativeButton("取消", null).setPositiveButton("开始修复", (d, w) -> repairDownload(entry)).show();
+    }
+
+    private void repairDownload(MediaRepository.OfflineItem entry) {
+        if (!integrityBusy.add(entry.key)) { notice("正在检查或修复本集"); return; }
+        if (currentOffline && currentEpisode != null && currentQuality != null && entry.key.equals(MediaRepository.key(currentEpisode, currentQuality))) closePlayback();
+        final int generation = downloadMutationGeneration;
+        final String cookie = CookieManager.getInstance().getCookie("https://api.bilibili.com");
+        try {
+            Callable<MediaRepository.IntegrityCheck> work = media.integrityCheck(entry, true, () -> dead || generation != downloadMutationGeneration);
+            runTask("正在检查并准备修复…", () -> {
+                try {
+                    Models.Quality refreshed = DownloadCatalogue.matching(qualityResolver.load(entry.episode, cookie), entry.quality);
+                    if (refreshed == null) throw new IllegalStateException("原画质暂时不可用");
+                    work.call(); return refreshed;
+                } finally { handler.post(() -> integrityBusy.remove(entry.key)); }
+            }, quality -> {
+                if (generation != downloadMutationGeneration || !downloadExists(entry.key)) return;
+                media.enqueue(entry.episode, quality); requestDownloadNotifications();
+                if (downloadsPage) renderDownloads(); notice("已加入修复下载，观看记录已保留");
+            });
+        } catch (Exception failure) { integrityBusy.remove(entry.key); error("暂时无法修复", "请等待当前下载完成后，再检查或修复文件。"); }
+    }
+
     private void chooseSpeed() {
         if (player == null) return;
         float[] rates = {.25f, .5f, .75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f};
@@ -1750,6 +1831,14 @@ public final class MainActivity extends Activity {
         if (currentEpisode == null) return;
         Models.Series series = findSeries(currentEpisode.seriesId);
         if (series == null || series.episodes.isEmpty()) { notice("当前视频没有其他剧集"); return; }
+        if (fullScreen) {
+            dismissEpisodeSidebar(); playerOverlay.cancelInteraction();
+            Set<String> downloaded = new LinkedHashSet<>();
+            for (MediaRepository.OfflineItem item : media.downloads()) if (item.complete) downloaded.add(item.episodeId);
+            episodeSidebar = EpisodeSidebar.show(this, series, currentEpisode.id, store, downloaded, accentColor,
+                this::selectEpisode, () -> { episodeSidebar = null; applySystemBars(); });
+            return;
+        }
         int selected = -1;
         String[] names = new String[series.episodes.size()];
         for (int i = 0; i < names.length; i++) {
@@ -1765,7 +1854,7 @@ public final class MainActivity extends Activity {
     private void chooseDisplayMenu() {
         new AlertDialog.Builder(this).setTitle("画面与播放")
             .setItems(new String[]{"适应画面", "铺满画面（裁切边缘）", "缩小 −", "放大 ＋", "恢复 100%", "视频信息 / HDR",
-                "本番片头片尾设置", skipPolicy.isDisabledForSession() ? "本集已取消自动跳过" : "本集不自动跳过", "定时停止"}, (dialog, index) -> {
+                "本番片头片尾设置", skipPolicy.isDisabledForSession() ? "本集已取消自动跳过" : "本集不自动跳过", "定时停止", "手势设置"}, (dialog, index) -> {
                 if (index == 0 || index == 1) {
                     zoom = 1; applyZoom();
                     playerView.setResizeMode(index == 0 ? AspectRatioFrameLayout.RESIZE_MODE_FIT : AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
@@ -1778,6 +1867,7 @@ public final class MainActivity extends Activity {
                     if (series != null) showSkipSettings(series);
                 } else if (index == 7) { skipPolicy.disableForSession(); hideSkipNotice(); notice("本集不再自动跳过，下次播放仍使用本番设置"); }
                 else if (index == 8) chooseSleepTimer();
+                else if (index == 9) chooseGestures();
             }).setNegativeButton("关闭", null).show();
     }
 
@@ -1948,7 +2038,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override public void onConfigurationChanged(Configuration configuration) {
-        super.onConfigurationChanged(configuration); playerOverlay.cancelInteraction(); resizeVideo(); root.requestApplyInsets();
+        super.onConfigurationChanged(configuration); dismissEpisodeSidebar(); playerOverlay.cancelInteraction(); resizeVideo(); root.requestApplyInsets();
     }
     @Override public void onBackPressed() {
         if (playerOverlay.isLocked()) { playerOverlay.unlock(); return; }
@@ -2145,7 +2235,10 @@ public final class MainActivity extends Activity {
         if (!entries.isEmpty()) summary += "\n下载中 " + active + " · 等待 " + waiting + " · 失败 " + failed;
         if (measured) summary += " · " + android.text.format.Formatter.formatShortFileSize(this, speed) + "/s";
         summary += "\n" + media.downloadNetworkInfo().summary + (store.isWifiOnlyDownloads() ? "" : " · 已允许移动数据下载");
-        if (available >= 0 && available < 200L * 1024 * 1024) summary += "\n可用空间较少，可删除不再需要的离线视频。";
+        if (media.isStoragePaused()) summary += "\n存储保护：下载已暂停，清理至至少 300 MB 后点继续。";
+        else if (available >= 0 && available < 500L * 1024 * 1024) summary += "\n空间预警：低于 200 MB 时会自动暂停下载。";
+        if (media.isStoragePaused() || (available >= 0 && available < 500L * 1024 * 1024))
+            content.addView(button("清理存储空间", false, v -> StorageCleanup.show(this, store, media, this::confirmRemoveDownloads)), gapLayout());
         List<PendingDownloads.Job> pending = PendingDownloads.list(this);
         if (!pending.isEmpty()) {
             int failedJobs = 0; for (PendingDownloads.Job job : pending) if (!job.error.isEmpty()) failedJobs++;
@@ -2209,6 +2302,7 @@ public final class MainActivity extends Activity {
         LinearLayout actions = row();
         if (entry.complete) addEqual(actions, button(store.getProgress(entry.episode.id).positionMs > 0 ? "继续离线观看" : "离线播放",
             true, v -> play(entry.episode, entry.quality, true)));
+        else if (entry.needsRepair) addEqual(actions, button("修复本集", true, v -> confirmRepair(entry)));
         else if (entry.failed) addEqual(actions, button("重新解析重试", true, v -> retryDownload(entry)));
         else addEqual(actions, button(entry.paused ? "继续本集" : "暂停本集", false, v -> {
             try { if (entry.paused) media.resume(entry); else media.pause(entry); renderDownloads(); }
@@ -2218,6 +2312,7 @@ public final class MainActivity extends Activity {
             try { if (entry.priority) media.clearPriority(); else media.prioritize(entry); renderDownloads(); }
             catch (Exception failure) { error("操作失败", explain(failure)); }
         }));
+        if (entry.complete) addEqual(actions, button(integrityBusy.contains(entry.key) ? "检查中…" : "检查文件", false, v -> checkIntegrity(entry)));
         if (entry.failed) addEqual(actions, button("失败详情", false, v -> new AlertDialog.Builder(this)
             .setTitle("下载失败详情").setMessage(diagnostic).setPositiveButton("知道了", null)
             .setNeutralButton("复制诊断", (d, w) -> copyDiagnostic(diagnostic)).show()));
@@ -2578,6 +2673,7 @@ public final class MainActivity extends Activity {
     private void error(String title, String message) { if (!dead && !isFinishing()) new AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("知道了", null).show(); }
     private static String explain(Exception exception) {
         if (exception instanceof BackupMessage) return exception.getMessage();
+        if (exception instanceof DownloadStoragePolicy.SpacePausedException) return exception.getMessage();
         if (exception instanceof DownloadStatus.StorageException) return exception.getMessage();
         return MediaErrors.describe(exception);
     }
@@ -2603,6 +2699,7 @@ public final class MainActivity extends Activity {
         else if (playerOverlay != null) playerOverlay.cancelInteraction();
     }
     @Override protected void onPause() {
+        dismissEpisodeSidebar();
         cancelDownloadPreparation();
         dismissPlaybackQualityDialog();
         resumeNavigation = player != null && (selectionToken == playbackNavigationToken || playbackChoicePending);
