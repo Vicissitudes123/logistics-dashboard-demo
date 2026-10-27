@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 env:
-  EXPECTED_APK_VERSION: '0.1.12'
-  EXPECTED_APK_VERSION_CODE: '13'
+  EXPECTED_APK_VERSION: '0.1.13'
+  EXPECTED_APK_VERSION_CODE: '14'
   EXPECTED_APK_CERTIFICATE_SHA256: '0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c'
 
 jobs:
@@ -234,10 +234,10 @@ jobs:
               'apkBytes': len(payload),
               'zipBytes': archive_target.stat().st_size,
               'notes': [
-                  '离线下载中的每集新增清晰可见的进度条，显示百分比和已下载大小。',
-                  '番剧分组卡片显示本番总下载进度，按视频与音轨的实际字节合计。',
-                  '暂停、等待和失败时保留已知进度；总大小未知时不显示虚假的百分比。',
-                  '进度颜色跟随主题，完成与失败使用独立提示色。',
+                  '新增离线文件检查与修复，保留观看记录及可复用的正常缓存。',
+                  '下载期间空间不足自动暂停；清理后手动继续，保留其他暂停设置。',
+                  '全屏选集改为右侧面板，显示已下载状态和本机观看进度。',
+                  '新增手势独立开关与快进灵敏度设置，可随片库备份恢复。',
               ],
               'sourceCommit': source_commit,
           }
