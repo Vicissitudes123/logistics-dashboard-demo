@@ -181,6 +181,12 @@ public final class Store {
     private static int controlsTimeout(int timeoutMs) {
         return timeoutMs == 3500 || timeoutMs == 5000 || timeoutMs == 8000 || timeoutMs == 0 ? timeoutMs : 3500;
     }
+    public int getGestureMask() { try { int value = prefs.getInt("gestureMask", 31); return value >= 0 && value <= 31 ? value : 31; } catch (ClassCastException ignored) { return 31; } }
+    public int getSeekSeconds() { try { int value = prefs.getInt("seekSeconds", 180); return value == 90 || value == 300 ? value : 180; } catch (ClassCastException ignored) { return 180; } }
+    public void setGestures(int mask, int seconds) {
+        if (mask < 0 || mask > 31 || (seconds != 90 && seconds != 180 && seconds != 300)) throw new IllegalArgumentException("无效的手势设置");
+        prefs.edit().putInt("gestureMask", mask).putInt("seekSeconds", seconds).apply();
+    }
     public boolean isAutoNext() { return booleanPreference("autoNext", false); }
     public void setAutoNext(boolean enabled) { prefs.edit().putBoolean("autoNext", enabled).apply(); }
     public boolean isRememberQuality() { return booleanPreference("rememberQuality", true); }
@@ -300,7 +306,7 @@ public final class Store {
     public void resetAppearanceAndPlaybackSettings() {
         prefs.edit().remove("theme").remove("speed").remove("holdSpeed").remove("controlsTimeoutMs")
             .remove("autoNext").remove("rememberQuality").remove("preferredQuality")
-            .remove("wifiOnlyDownloads").remove("libraryFilter").apply();
+            .remove("wifiOnlyDownloads").remove("libraryFilter").remove("gestureMask").remove("seekSeconds").apply();
     }
 
     /** Export by an explicit field allowlist, never by copying SharedPreferences or media JSON. */
@@ -340,6 +346,7 @@ public final class Store {
                 .put("holdSpeed", getHoldSpeed()).put("controlsTimeoutMs", getControlsTimeoutMs())
                 .put("autoNext", isAutoNext()).put("rememberQuality", isRememberQuality())
                 .put("wifiOnlyDownloads", isWifiOnlyDownloads()).put("libraryFilter", getLibraryFilter())
+                .put("gestureMask", getGestureMask()).put("seekSeconds", getSeekSeconds())
                 .put("preferredQuality", profile == null ? JSONObject.NULL : profile);
             String lastSeries = getLastSeries();
             String document = LibraryBackup.document(seriesJson, progressJson, settings,
@@ -475,6 +482,7 @@ public final class Store {
             // not overwrite newer per-device choices that it could not contain.
             if (settings.has("wifiOnlyDownloads")) edit.putBoolean("wifiOnlyDownloads", settings.getBoolean("wifiOnlyDownloads"));
             if (settings.has("libraryFilter")) edit.putString("libraryFilter", settings.getString("libraryFilter"));
+            if (settings.has("gestureMask")) edit.putInt("gestureMask", settings.getInt("gestureMask")).putInt("seekSeconds", settings.getInt("seekSeconds"));
             if (profile == null) edit.remove("preferredQuality"); else edit.putString("preferredQuality", profile);
             if (!edit.commit()) throw new IllegalStateException("备份合并未能写入磁盘，请检查可用空间");
             return new LibraryBackup.Result(added, merged, imported, kept, snapshot.skippedLocalEpisodes);
