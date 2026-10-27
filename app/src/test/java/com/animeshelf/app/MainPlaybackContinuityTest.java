@@ -396,6 +396,25 @@ public class MainPlaybackContinuityTest {
         PendingDownloads.clear(activity);
     }
 
+    @Test @Config(qualifiers = "w800dp-h360dp-land-mdpi")
+    public void fullscreenSidebarKeepsPlayingAndUsesOfflineResumeWithoutNetwork() throws Exception {
+        Models.Episode next = series.episodes.get(1); saveDownloaded(next, profile, true);
+        store.saveProgress(next, 42000, 300000);
+        FakePlayer first = start(0, profile, false); first.ready(); first.position = 18000;
+        invoke("setFullScreen", new Class<?>[]{boolean.class}, true);
+        invoke("chooseEpisodeMenu");
+        android.app.Dialog sidebar = (android.app.Dialog) get("episodeSidebar");
+        assertNotNull(sidebar); assertTrue(sidebar.isShowing()); assertTrue(first.playWhenReady);
+        assertEquals(18000, first.position); assertFalse(first.released);
+        assertTrue(text(sidebar.getWindow().getDecorView()).contains("已下载 · 看到 00:42"));
+        View nextRow = description(sidebar.getWindow().getDecorView(), "侧栏第 2 集，已下载 · 看到 00:42");
+        assertNotNull(nextRow); assertTrue(nextRow.performClick()); idle();
+        assertFalse(sidebar.isShowing()); assertTrue((Boolean) get("fullScreen"));
+        assertEquals(next.id, ((Models.Episode) get("currentEpisode")).id);
+        assertTrue((Boolean) get("currentOffline")); assertEquals(42000, currentFake().position);
+        assertEquals(0, resolveCalls.get());
+    }
+
     private FakePlayer start(int index, Models.Quality quality, boolean offline) throws Exception {
         invoke("play", new Class<?>[]{Models.Episode.class, Models.Quality.class, boolean.class}, series.episodes.get(index), quality, offline);
         FakePlayer configured = currentFake();
