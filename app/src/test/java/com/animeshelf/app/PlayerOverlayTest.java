@@ -63,6 +63,17 @@ public class PlayerOverlayTest {
         if (controller != null) controller.pause().stop().destroy();
     }
 
+    @Test public void disabledHoldAndDoubleTapLeavePlaybackUntouchedAndButtonsStillWork() {
+        host.gestureMask = PlaybackGestures.ALL & ~PlaybackGestures.HOLD & ~PlaybackGestures.DOUBLE_TAP;
+        down(200, 160); idle(ViewConfiguration.getLongPressTimeout() + 1);
+        assertEquals(1f, host.speed, .001f); assertEquals(0, host.temporarySpeedChanges);
+        touch(MotionEvent.ACTION_UP, 200, 160); idle(500);
+        tap(200, 160); idle(60); tap(200, 160); idle(400);
+        assertEquals(0, host.playbackToggles);
+        overlay.setActive(true); layout(640, 360);
+        tapControl("暂停"); assertEquals(1, host.playbackToggles);
+    }
+
     @Test public void singlePictureTapHidesAndRestoresControlsWithoutPausingPlayback() {
         assertTrue(overlay.areControlsVisible());
         tap(200, 160);
@@ -712,7 +723,7 @@ public class PlayerOverlayTest {
         boolean playing = true, seekable = true;
         long position = 60000, duration = 300000;
         float speed = 1f, brightness = .5f, holdSpeed = 2f;
-        int controlsTimeoutMs = 3500;
+        int controlsTimeoutMs = 3500, gestureMask = PlaybackGestures.ALL;
         int playbackToggles, fullscreenToggles, seekCalls, observations, persistedSpeedChanges, temporarySpeedChanges;
         int brightnessChanges, speedChoices, episodeChoices, displayChoices, backCalls, homeCalls;
         boolean previousAvailable, nextAvailable;
@@ -730,6 +741,7 @@ public class PlayerOverlayTest {
         @Override public long durationMs() { observations++; return duration; }
         @Override public float speed() { observations++; return speed; }
         @Override public float holdSpeed() { observations++; return holdSpeed; }
+        @Override public int gestureMask() { return gestureMask; }
         @Override public int controlsTimeoutMs() { observations++; return controlsTimeoutMs; }
         @Override public void togglePlayback() { playbackToggles++; playing = !playing; }
         @Override public void seekTo(long value) { seekCalls++; position = value; }
