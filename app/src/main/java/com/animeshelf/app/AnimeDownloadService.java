@@ -34,7 +34,7 @@ public final class AnimeDownloadService extends DownloadService {
             userPaused |= (download.stopReason & DownloadNetworkPolicy.STOP_USER_PAUSED) != 0;
         boolean active = false;
         for (Download download : downloads) active |= download.state == Download.STATE_DOWNLOADING;
-        String description = repository.isManuallyPaused() ? "番匣 · 全部下载已暂停"
+        String description = repository.isStoragePaused() ? "番匣 · 存储空间不足，下载已暂停" : repository.isManuallyPaused() ? "番匣 · 全部下载已暂停"
             : network.wifiOnly && !network.allowed
             ? "番匣 · 等待 Wi-Fi 后继续下载" : !active && userPaused
             ? "番匣 · 有任务已暂停" : "番匣 · 正在保存离线视频";
