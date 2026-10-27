@@ -38,6 +38,15 @@ public class LibraryBackupTest {
         store = new Store(context);
     }
 
+    @Test public void gestureSettingsRoundTripAndOldBackupsKeepDeviceChoices() throws Exception {
+        store.setGestures(5, 90); String backup = store.exportBackup();
+        store.setGestures(31, 300); store.importBackup(store.inspectBackup(backup));
+        assertEquals(5, store.getGestureMask()); assertEquals(90, store.getSeekSeconds());
+        store.setGestures(0, 300); store.importBackup(store.inspectBackup(asVersionTwo(backup)));
+        assertEquals(0, store.getGestureMask()); assertEquals(300, store.getSeekSeconds());
+        store.resetAppearanceAndPlaybackSettings(); assertEquals(31, store.getGestureMask()); assertEquals(180, store.getSeekSeconds());
+    }
+
     @Test public void exportContainsOnlyPortableMetadataAndNeverMediaSecretsOrLocalGrants() throws Exception {
         Models.Series online = series("ss1", "线上片库", "ep1");
         online.coverUrl = "https://i0.hdslb.com/bfs/bangumi/public-cover.jpg";
@@ -420,6 +429,7 @@ public class LibraryBackupTest {
 
     private static String asVersionTwo(String text) throws Exception {
         JSONObject document = new JSONObject(text).put("version", 2);
+        document.getJSONObject("settings").remove("gestureMask"); document.getJSONObject("settings").remove("seekSeconds");
         JSONArray series = document.getJSONArray("series");
         for (int i = 0; i < series.length(); i++) series.getJSONObject(i).remove("playback");
         return document.toString();
@@ -435,7 +445,7 @@ public class LibraryBackupTest {
         store.setSeriesPlaybackPreference("ss-offline", true, offline);
         String text = store.exportBackup();
         JSONObject document = new JSONObject(text);
-        assertEquals(3, document.getInt("version"));
+        assertEquals(4, document.getInt("version"));
         assertFalse(text.contains("media.example"));
         LibraryBackup.Snapshot snapshot = store.inspectBackup(text);
         prefs.edit().clear().commit();
