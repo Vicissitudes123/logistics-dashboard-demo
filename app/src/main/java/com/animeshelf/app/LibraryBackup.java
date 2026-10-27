@@ -17,7 +17,7 @@ public final class LibraryBackup {
     public static final int MAX_BYTES = 4 * 1024 * 1024;
     public static final int MAX_SERIES = 1000;
     public static final int MAX_EPISODES = 20000;
-    public static final int CURRENT_VERSION = 3;
+    public static final int CURRENT_VERSION = 4;
     private static final long MAX_DURATION_MS = 7L * 24 * 60 * 60 * 1000;
     private static final String FORMAT = "anime-shelf-library";
     private LibraryBackup() { }
@@ -228,8 +228,13 @@ public final class LibraryBackup {
 
     private static void validateSettings(JSONObject value, int version) throws JSONException {
         if (version == 1) keys(value, "theme", "speed", "holdSpeed", "controlsTimeoutMs", "autoNext", "rememberQuality", "preferredQuality");
-        else keys(value, "theme", "speed", "holdSpeed", "controlsTimeoutMs", "autoNext", "rememberQuality", "preferredQuality",
-            "wifiOnlyDownloads", "libraryFilter");
+        else if (version < 4) keys(value, "theme", "speed", "holdSpeed", "controlsTimeoutMs", "autoNext", "rememberQuality", "preferredQuality", "wifiOnlyDownloads", "libraryFilter");
+        else keys(value, "theme", "speed", "holdSpeed", "controlsTimeoutMs", "autoNext", "rememberQuality", "preferredQuality", "wifiOnlyDownloads", "libraryFilter", "gestureMask", "seekSeconds");
+        if (version >= 4) {
+            integer(value, "gestureMask", 0, 31);
+            long seconds = integer(value, "seekSeconds", 90, 300);
+            require(seconds == 90 || seconds == 180 || seconds == 300, "快进手势灵敏度无效");
+        }
         String theme = string(value, "theme", 16, false);
         require(theme.equals(ThemePalette.get(theme).id), "主题设置无效");
         double speed = number(value, "speed");
