@@ -42,6 +42,8 @@ public final class PlayerOverlay extends FrameLayout {
         long positionMs();
         long durationMs();
         float speed();
+        default int gestureMask() { return PlaybackGestures.ALL; }
+        default int seekSeconds() { return 180; }
         default float holdSpeed() { return 2f; }
         default int controlsTimeoutMs() { return 3500; }
         default int accentColor() { return 0xFF8DB7FF; }
@@ -231,7 +233,7 @@ public final class PlayerOverlay extends FrameLayout {
                 performClick(); return true;
             }
             @Override public void onLongPress(MotionEvent event) {
-                if (locked || !active || !touchAccepted || multiTouch || scrubbing || longPressConsumed || doubleTapConsumed
+                if ((host.gestureMask() & PlaybackGestures.HOLD) == 0 || locked || !active || !touchAccepted || multiTouch || scrubbing || longPressConsumed || doubleTapConsumed
                     || gestures.getMode() != PlaybackGestures.Mode.PENDING || !host.hasPlayer() || !host.isPlaying()) return;
                 float speed = host.speed();
                 speedBeforeHold = Float.isNaN(speed) || Float.isInfinite(speed) || speed <= 0 ? 1f : speed;
@@ -244,7 +246,7 @@ public final class PlayerOverlay extends FrameLayout {
                 showFeedback(speedText(heldSpeed) + " 加速中\n松手恢复 " + speedText(speedBeforeHold));
             }
             @Override public boolean onDoubleTap(MotionEvent event) {
-                if (locked || !active || multiTouch || !host.hasPlayer()) return false;
+                if ((host.gestureMask() & PlaybackGestures.DOUBLE_TAP) == 0 || locked || !active || multiTouch || !host.hasPlayer()) return false;
                 doubleTapConsumed = true;
                 host.togglePlayback(); refresh();
                 showFeedback(host.isPlaying() ? "继续播放" : "已暂停"); dismissFeedbackSoon();
@@ -408,6 +410,7 @@ public final class PlayerOverlay extends FrameLayout {
             stopTemporarySpeed(); longPressConsumed = false; doubleTapConsumed = false; multiTouch = false;
             int maxVolume = audio == null || audio.isVolumeFixed() ? 0 : audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
             int volume = audio == null ? 0 : audio.getStreamVolume(AudioManager.STREAM_MUSIC);
+            gestures.configure(host.gestureMask(), host.seekSeconds());
             PlaybackGestures.Snapshot snapshot = new PlaybackGestures.Snapshot(host.positionMs(), host.durationMs(), host.canSeek(), host.brightness(), volume, maxVolume);
             touchAccepted = gestures.begin(event.getX(), event.getY(), getWidth(), getHeight(), edgeInsetPx,
                 ViewConfiguration.get(getContext()).getScaledTouchSlop(), snapshot);
