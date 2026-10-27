@@ -53,6 +53,11 @@ public final class MediaRepository {
     private final DownloadNetworkPolicy networkPolicy;
     private final SharedPreferences policyPreferences;
     private final DownloadControls controls;
+    private final DownloadStoragePolicy storagePolicy;
+    private final OfflineIntegrity integrity;
+    private final java.util.concurrent.ExecutorService integrityWorker = Executors.newSingleThreadExecutor();
+    private final Map<String, java.util.concurrent.atomic.AtomicInteger> integrityGenerations = new ConcurrentHashMap<>();
+    private final Set<String> repairAuthorized = ConcurrentHashMap.newKeySet();
     private volatile boolean manuallyPaused;
     private volatile boolean released;
     private int appliedPolicyStopReason = Integer.MIN_VALUE;
@@ -66,7 +71,8 @@ public final class MediaRepository {
         public String key, episodeId, title, qualityLabel, status, errorDetail;
         public Models.Episode episode;
         public Models.Quality quality;
-        public boolean complete, failed, paused, queued, downloading, waitingForNetwork, waitingForWifi, priority;
+        public boolean complete, failed, paused, queued, downloading, waitingForNetwork, waitingForWifi, priority, waitingForStorage, needsRepair;
+        public String integrityStatus;
         public DownloadStatus.State state;
         public DownloadStatus.FailureKind failureKind = DownloadStatus.FailureKind.NONE;
         public float percent;
@@ -85,6 +91,8 @@ public final class MediaRepository {
         storageDirectory = context.getFilesDir();
         StandaloneDatabaseProvider database = new StandaloneDatabaseProvider(context);
         cache = new SimpleCache(new File(storageDirectory, "offline-media"), new NoOpCacheEvictor(), database);
+        storagePolicy = new DownloadStoragePolicy(policyPreferences, this::availableStorageBytes, SystemClock::elapsedRealtime);
+        integrity = new OfflineIntegrity(cache, context.getSharedPreferences("offline_integrity", Context.MODE_PRIVATE));
         // Restore routes before the manager can resume persisted requests after process death.
         for (JSONObject saved : store.savedDownloads()) {
             try { register(saved.getString("key"), Models.Quality.fromJson(saved.getJSONObject("quality"))); }
@@ -109,7 +117,8 @@ public final class MediaRepository {
         manager.setMaxParallelDownloads(2);
         manager.addListener(new DownloadManager.Listener() {
             @Override public void onDownloadChanged(DownloadManager downloadManager, Download download, Exception finalException) {
-                if (isPolicyBlock(finalException)) {
+                if (finalException != null && DownloadStatus.classify(finalException) == DownloadStatus.FailureKind.STORAGE) storagePolicy.latch();
+                if (isPolicyBlock(finalException) || (finalException != null && storagePolicy.isBlocked())) {
                     // A network change can race the final read. Keep the task resumable instead
                     // of making a deliberate policy stop look like a permanent download failure.
                     if (isSavedDownloadRequest(download.request.id))
@@ -118,7 +127,10 @@ public final class MediaRepository {
                     return;
                 }
                 if (finalException != null) store.saveDownloadError(download.request.id, DownloadStatus.safeFailure(finalException));
-                else if (download.state == Download.STATE_COMPLETED) store.clearDownloadError(download.request.id);
+                else if (download.state == Download.STATE_COMPLETED) {
+                    store.clearDownloadError(download.request.id);
+                    scheduleIntegrity(download);
+                }
                 releaseFinishedPriority();
                 sampleTelemetry();
             }
@@ -146,8 +158,10 @@ public final class MediaRepository {
         // Deliberately never call resumeDownloads here: reconnecting must not undo a user pause.
     }
 
-    private int currentPolicyStopReason() { return DownloadNetworkPolicy.stopReason(networkPolicy.info(), manuallyPaused); }
-    private boolean downloadNetworkAllowed() { return !manuallyPaused && networkPolicy.info().allowed; }
+    private int currentPolicyStopReason() {
+        return DownloadNetworkPolicy.stopReason(networkPolicy.info(), manuallyPaused) | (storagePolicy.isBlocked() ? DownloadStoragePolicy.STOP_STORAGE : 0);
+    }
+    private boolean downloadNetworkAllowed() { return storagePolicy.allowsRead() && !manuallyPaused && networkPolicy.info().allowed; }
     private void scheduleNetworkPolicyApply() {
         if (!released) telemetryHandler.post(this::applyDownloadNetworkPolicy);
     }
@@ -157,6 +171,8 @@ public final class MediaRepository {
         released = true;
         networkPolicy.close();
         telemetryHandler.removeCallbacksAndMessages(null);
+        integrityWorker.shutdownNow();
+        try { integrityWorker.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
         manager.release();
         cache.release();
         if (instance == this) instance = null;
@@ -239,7 +255,12 @@ public final class MediaRepository {
         if (e.localUri != null && !e.localUri.isEmpty()) throw new IllegalArgumentException("本地视频无需下载");
         DownloadStatus.requireStartSpace(availableStorageBytes());
         applyDownloadNetworkPolicy();
+        if (!storagePolicy.allowsRead()) { applyDownloadNetworkPolicy(); throw new DownloadStoragePolicy.SpacePausedException(); }
         String key = key(e, q);
+        if (!isSavedDownloadRequest(key + ":v")) { integrity.forget(key + ":v"); integrity.forget(key + ":a"); }
+        if ((integrity.bad(key + ":v") || integrity.bad(key + ":a")) && !repairAuthorized.remove(key))
+            throw new IllegalStateException("离线文件异常，请先点击检查 / 修复");
+        invalidateIntegrity(key);
         for (OfflineItem old : downloads()) {
             if (old.episodeId.equals(e.id) && old.quality.id.equals(q.id) && !old.key.equals(key) && !old.complete)
                 remove(old);
@@ -265,12 +286,15 @@ public final class MediaRepository {
             DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true); return;
         }
     }
+    public boolean isStoragePaused() { return storagePolicy.isBlocked(); }
+    public boolean checkDownloadSpace() { boolean allowed = storagePolicy.allowsRead(); if (!allowed) scheduleNetworkPolicyApply(); return allowed; }
     public boolean isManuallyPaused() { return manuallyPaused; }
     public void pauseAll() {
         markManuallyPaused(true);
         DownloadService.sendPauseDownloads(context, AnimeDownloadService.class, false);
     }
     public void resumeAll() {
+        storagePolicy.resume();
         controls.resumeAll();
         markManuallyPaused(false);
         DownloadService.sendResumeDownloads(context, AnimeDownloadService.class, true);
@@ -292,6 +316,7 @@ public final class MediaRepository {
         controls.pause(item.key, true); applyDownloadNetworkPolicy();
     }
     public void resume(OfflineItem item) {
+        storagePolicy.resume();
         // Resuming one item after "pause all" keeps every other unfinished item paused.
         if (manuallyPaused) {
             for (OfflineItem other : downloads()) if (!other.complete && !other.key.equals(item.key)) controls.pause(other.key, true);
@@ -317,6 +342,8 @@ public final class MediaRepository {
         controls.clearPriority(); applyDownloadNetworkPolicy();
     }
     public void remove(OfflineItem item) {
+        invalidateIntegrity(item.key); repairAuthorized.remove(item.key);
+        integrity.forget(item.key + ":v"); integrity.forget(item.key + ":a");
         PendingDownloads.cancel(context, item.episode, item.quality);
         controls.forget(item.key);
         DownloadService.sendRemoveDownload(context, AnimeDownloadService.class, item.key + ":v", true);
@@ -360,6 +387,13 @@ public final class MediaRepository {
                     && item.state != DownloadStatus.State.REMOVING;
                 if (priorityWaiting) item.state = DownloadStatus.State.QUEUED;
                 item.priority = controls.priority().equals(item.key);
+                item.waitingForStorage = storagePolicy.isBlocked() && item.state != DownloadStatus.State.COMPLETED
+                    && item.state != DownloadStatus.State.FAILED && item.state != DownloadStatus.State.REMOVING;
+                if (item.waitingForStorage) item.state = DownloadStatus.State.PAUSED;
+                item.needsRepair = item.state == DownloadStatus.State.COMPLETED
+                    && (integrity.bad(item.key + ":v") || (audioNeeded && integrity.bad(item.key + ":a")));
+                item.integrityStatus = integrity.status(item.key + ":v");
+                if (item.needsRepair) item.state = DownloadStatus.State.FAILED;
                 item.complete = item.state == DownloadStatus.State.COMPLETED;
                 item.failed = item.state == DownloadStatus.State.FAILED;
                 item.paused = item.state == DownloadStatus.State.PAUSED;
@@ -382,6 +416,8 @@ public final class MediaRepository {
                 if (item.priority) item.status += " · 优先下载";
                 if (item.waitingForWifi) item.status = "等待 Wi-Fi · 自动继续下载";
                 if (item.failed) item.status += " · " + DownloadStatus.failureSummary(item.failureKind);
+                if (item.waitingForStorage) item.status = "空间不足 · 下载已暂停，清理后点继续";
+                if (item.needsRepair) { item.status = "离线文件异常 · 可检查 / 修复"; item.errorDetail = "文件校验发现缺失、长度异常或内容变化，请修复后再播放。"; }
                 items.add(item);
             } catch (Exception ignored) { }
         }
@@ -420,8 +456,50 @@ public final class MediaRepository {
     }
     public boolean isDownloaded(Models.Episode e, Models.Quality q) {
         String key = key(e, q);
-        return complete(track(key + ":v")) && (!hasAudio(q) || complete(track(key + ":a")));
+        return !integrity.bad(key + ":v") && !integrity.bad(key + ":a") && complete(track(key + ":v")) && (!hasAudio(q) || complete(track(key + ":a")));
     }
+    private void invalidateIntegrity(String key) {
+        integrityGenerations.computeIfAbsent(key + ":v", ignored -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+        integrityGenerations.computeIfAbsent(key + ":a", ignored -> new java.util.concurrent.atomic.AtomicInteger()).incrementAndGet();
+    }
+    private void scheduleIntegrity(Download download) {
+        String id = download.request.id;
+        if (!isSavedDownloadRequest(id)) return;
+        java.util.concurrent.atomic.AtomicInteger generation = integrityGenerations.computeIfAbsent(id, ignored -> new java.util.concurrent.atomic.AtomicInteger());
+        int expected = generation.incrementAndGet();
+        long length = download.contentLength > 0 ? download.contentLength : download.getBytesDownloaded();
+        integrityWorker.execute(() -> { try { integrity.inspect(id, length, () -> released || generation.get() != expected); } catch (Exception ignored) { } });
+    }
+    static final class IntegrityCheck {
+        final List<OfflineIntegrity.Report> tracks = new ArrayList<>();
+        boolean ok() { for (OfflineIntegrity.Report r : tracks) if (!r.ok()) return false; return !tracks.isEmpty(); }
+        String summary() {
+            StringBuilder text = new StringBuilder();
+            for (OfflineIntegrity.Report r : tracks) { if (text.length() > 0) text.append("\n"); text.append(r.track.endsWith(":a") ? "声音：" : "画面：").append(r.summary()); }
+            return text.toString();
+        }
+    }
+    /** Build a read-only job on the main thread, then run the expensive scan on a worker. */
+    java.util.concurrent.Callable<IntegrityCheck> integrityCheck(OfflineItem item, boolean repair, java.util.function.BooleanSupplier cancelled) {
+        Download video = track(item.key + ":v"), audio = hasAudio(item.quality) ? track(item.key + ":a") : null;
+        if (!complete(video) || (hasAudio(item.quality) && !complete(audio))) throw new IllegalStateException("请等待本集下载完成后再检查");
+        invalidateIntegrity(item.key);
+        int vg = integrityGenerations.get(item.key + ":v").get(), ag = integrityGenerations.get(item.key + ":a").get();
+        java.util.function.BooleanSupplier invalid = () -> released || cancelled.getAsBoolean()
+            || integrityGenerations.get(item.key + ":v").get() != vg || integrityGenerations.get(item.key + ":a").get() != ag;
+        return () -> {
+            IntegrityCheck result = new IntegrityCheck();
+            result.tracks.add(integrity.inspect(item.key + ":v", video.contentLength > 0 ? video.contentLength : video.getBytesDownloaded(), invalid));
+            if (audio != null) result.tracks.add(integrity.inspect(item.key + ":a", audio.contentLength > 0 ? audio.contentLength : audio.getBytesDownloaded(), invalid));
+            if (repair) {
+                for (OfflineIntegrity.Report report : result.tracks) if (!report.ok()) integrity.removeDamaged(report, invalid);
+                if (invalid.getAsBoolean()) throw new java.util.concurrent.CancellationException();
+                repairAuthorized.add(item.key);
+            }
+            return result;
+        };
+    }
+
     public MediaSource createMediaSource(Models.Episode e, Models.Quality q, boolean offline) {
         if (e.localUri != null && !e.localUri.isEmpty())
             return new DefaultMediaSourceFactory(context).createMediaSource(MediaItem.fromUri(e.localUri));
