@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "versionCode": 13,
-  "versionName": "0.1.12",
+  "versionCode": 14,
+  "versionName": "0.1.13",
   "packageName": "com.animeshelf.app",
   "minSdk": 26,
-  "apkUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.12.apk",
-  "zipUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.12-install.zip",
-  "apkSha256": "5dded75c59c1c1910659e71aefcd5bf76282147528b96b4f09a17b5fc82f5b57",
-  "zipSha256": "c0525b784b9cbc81359b57f4d39d81a6bce62b48c3da6c76f6f657e1d25a0e72",
-  "apkBytes": 5071037,
-  "zipBytes": 5071179,
+  "apkUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.13.apk",
+  "zipUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/anime-shelf-0.1.13-install.zip",
+  "apkSha256": "4b8a48b1981cde0adf22b2753903f686c0f45c5a324c6a4d71ca66153b31154d",
+  "zipSha256": "5e896df8062ac7bdc69faaf2c46399201bd6fa11a0ed09d5b4089f231defa6af",
+  "apkBytes": 5086537,
+  "zipBytes": 5086679,
   "notes": [
-    "离线下载中的每集新增清晰可见的进度条，显示百分比和已下载大小。",
-    "番剧分组卡片显示本番总下载进度，按视频与音轨的实际字节合计。",
-    "暂停、等待和失败时保留已知进度；总大小未知时不显示虚假的百分比。",
-    "进度颜色跟随主题，完成与失败使用独立提示色。"
+    "新增离线文件检查与修复，保留观看记录及可复用的正常缓存。",
+    "下载期间空间不足自动暂停；清理后手动继续，保留其他暂停设置。",
+    "全屏选集改为右侧面板，显示已下载状态和本机观看进度。",
+    "新增手势独立开关与快进灵敏度设置，可随片库备份恢复。"
   ],
-  "sourceCommit": "c47b1644108af38e70ca2d2465e0665d4990c220"
+  "sourceCommit": "de5f9f1884e67e12652daa93da0164f69c541624"
 }
