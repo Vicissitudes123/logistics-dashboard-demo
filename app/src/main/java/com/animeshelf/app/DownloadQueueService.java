@@ -53,9 +53,9 @@ public final class DownloadQueueService extends Service {
         for (PendingDownloads.Job job : jobs) if (job.error.isEmpty()) { selected = job; break; }
         if (selected == null) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return; }
         MediaRepository repository = MediaRepository.get(this);
-        if (!repository.downloadNetworkInfo().allowed || repository.isManuallyPaused()) {
+        if (!repository.checkDownloadSpace() || !repository.downloadNetworkInfo().allowed || repository.isManuallyPaused()) {
             if (wake.isHeld()) wake.release();
-            report(repository.isManuallyPaused() ? "已暂停 · 待加入 " + jobs.size() + " 集" : "等待允许的网络 · 待加入 " + jobs.size() + " 集");
+            report(repository.isStoragePaused() ? "存储空间不足，清理后点继续 · 待加入 " + jobs.size() + " 集" : repository.isManuallyPaused() ? "已暂停 · 待加入 " + jobs.size() + " 集" : "等待允许的网络 · 待加入 " + jobs.size() + " 集");
             handler.postDelayed(pump, 5000); return;
         }
         if (!wake.isHeld()) wake.acquire(10 * 60_000L);
