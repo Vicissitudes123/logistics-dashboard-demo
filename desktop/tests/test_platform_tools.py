@@ -21,7 +21,7 @@ class PlatformToolsTest(unittest.TestCase):
         releases=[{'tag_name':'anime-shelf-tablet-v99.0.0','assets':[]},{'tag_name':'anime-shelf-desktop-v'+version,'assets':[{'name':'desktop-release.json','browser_download_url':url}]}]
         calls=[]
         def fetch(u):calls.append(u);return releases if u==API_URL else self.manifest()
-        self.assertTrue(check_update(fetch=fetch)['available']);self.assertEqual([API_URL,url],calls)
+        self.assertTrue(check_update('0.1.13.1',fetch=fetch)['available']);self.assertEqual([API_URL,url],calls)
         self.assertFalse(check_update(fetch=lambda u:[])['available'])
 
 if __name__=='__main__':unittest.main()
