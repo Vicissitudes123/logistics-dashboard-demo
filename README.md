@@ -2,9 +2,18 @@
 
 原生安卓测试版，Android 8.0（API 26）及以上。中文界面，视频、账号会话和观看记录保存在设备本地，不需要部署服务器。
 
-[下载 0.1.12 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/839b88bbeb246179ccf02a7bba0de63f308bac1b/downloads/anime-shelf-0.1.12-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/839b88bbeb246179ccf02a7bba0de63f308bac1b/downloads/anime-shelf-0.1.12.apk)。签名与旧版一致，可直接覆盖安装保留数据，不要先卸载旧版。
+[下载 0.1.13 安装 ZIP](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/73b0db709c8055a94fbbe75092c11d265122442e/downloads/anime-shelf-0.1.13-install.zip)（解压后安装 APK），或[直接下载 APK](https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/73b0db709c8055a94fbbe75092c11d265122442e/downloads/anime-shelf-0.1.13.apk)。签名与旧版一致，可直接覆盖安装保留数据，不要先卸载旧版。
 
-**当前交付为 0.1.12。** 离线下载新增单集和番剧分组进度条，显示百分比与已下载大小。132 项解析断言、335 项 JUnit/Robolectric 测试通过，编译、Lint、签名及公开下载文件已核对；见 [BUILD_STATUS.md](BUILD_STATUS.md)。
+**当前交付为 0.1.13。** 新增离线文件检查与修复、空间保护、全屏选集侧栏及手势设置，保留单集和番剧分组下载进度条。132 项解析断言、347 项 JUnit/Robolectric 测试通过，编译、Lint、签名及公开文件已核对；见 [BUILD_STATUS.md](BUILD_STATUS.md)。
+
+## 0.1.13 离线检查与播放设置
+
+- 已完成的离线条目增加「检查文件」。本机检查缓存覆盖、文件长度和 SHA-256 摘要；发现异常后可确认修复，重新获取相同档位地址、清除异常片段并补下缺失部分，保留正常缓存和观看记录。资源路径更换时重新下载该版本。
+- 新下载完成后在后台建立校验记录。旧下载第一次检查只能判断结构并建立本机基线，不能证明此前没有同长度损坏；不把校验当作解码兼容性或服务端原文件校验。
+- 下载页提示可用空间不足；传输中约每 500 ms 检查一次空间，低于 200 MB 暂停并持久保存状态，避免继续占满存储。清理到至少 300 MB 后手动继续；保留每集、全局暂停和仅 Wi-Fi 设置。实际写入报空间不足时也转为可继续的暂停状态。
+- 全屏「选集」打开右侧面板，当前播放继续。剧集按集数排序，显示已下载、本机观看位置和看完标记，选择后沿用离线优先及画质记忆；竖屏继续使用原选集入口。
+- 「设置 → 手势设置」或播放器「画面 → 手势设置」可独立开关亮度、音量、横滑进度、长按加速、双击播放，横滑一屏的最大跳转时间可选 90 / 180 / 300 秒。关闭手势后控制按钮和进度条仍可用。
+- 元数据备份升级 v4，保存手势设置并兼容 v1–v3；导入旧备份保留本机手势选择。重置外观与播放设置可恢复默认手势。
 
 ## 0.1.12 下载进度条
 
@@ -51,6 +60,7 @@
 
 ## 固定存档
 
+- [0.1.13 存档（2026-10-28）](archives/0.1.13/README.md)：保存当前功能基线的源码、APK、安装 ZIP、校验信息和恢复步骤，固定应用快照为 `73b0db709c8055a94fbbe75092c11d265122442e`。
 - [0.1.10 存档（2026-10-26）](archives/0.1.10/README.md)：保留稳定基线的源码、APK、安装 ZIP、校验信息和恢复步骤，固定到提交 `81293df64257ef7ff1d5b2e3d4d4ccd63c48b5f2`。
 - [0.1.6 存档（2026-10-23）](archives/0.1.6/README.md)：保留此前回退基线。
 
