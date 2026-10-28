@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "versionCode": 15,
+  "versionName": "0.1.13.1",
+  "packageName": "com.animeshelf.app",
+  "minSdk": 26,
+  "apkUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/tablet/anime-shelf-0.1.13.1.apk",
+  "zipUrl": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/tablet/anime-shelf-0.1.13.1-install.zip",
+  "apkSha256": "0195896ee5ad5cde4a66ac2a1d9ca819ad5cf97e16011d9af6e28b2849d1217b",
+  "zipSha256": "fe671e60ddbc13a73f1ac580d1c3b75f9b4c840f0071bb51b4888ef00b85d554",
+  "apkBytes": 5092149,
+  "zipBytes": 5092295,
+  "notes": [
+    "面向支持安卓 APK 的华为平板，按当前窗口宽度调整大屏布局。",
+    "宽屏侧边导航、播放器与剧集双栏，窄分屏自动恢复紧凑布局。",
+    "保留手机版 0.1.13 的播放、离线下载、批量管理和续播功能。",
+    "使用独立平板更新通道，登录和观看记录仍保存在本机。"
+  ],
+  "sourceCommit": "d1bb12d340f6265136ff7a80c83450a1ca1f16f7"
+}
