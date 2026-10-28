@@ -1,0 +1,558 @@
+{
+  "schemaVersion": 1,
+  "appVersion": "0.1.13",
+  "versionCode": 14,
+  "packageName": "com.animeshelf.app",
+  "archivedDate": "2026-10-28",
+  "timezone": "Asia/Shanghai",
+  "repository": "Vicissitudes123/logistics-dashboard-demo",
+  "archiveBranch": "archive/anime-shelf-0.1.13-20261028",
+  "fixedApplicationCommit": "73b0db709c8055a94fbbe75092c11d265122442e",
+  "sourceCommit": "de5f9f1884e67e12652daa93da0164f69c541624",
+  "sourceTree": "6e285cc923a997eb92f0acad3a9bf51641544602",
+  "releaseTree": "47befe023b7a524b7748c50a4a010243f9d52b78",
+  "buildRun": 40597855157,
+  "buildArtifact": 12777735611,
+  "artifactSha256": "3691f3958b51e32e3b392d16e0d9adf377225ab21d286d5e07e200f0161560f1",
+  "certificateSha256": "0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c",
+  "parserAssertions": 132,
+  "tests": {
+    "tests": 347,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 36
+  },
+  "artifacts": [
+    {
+      "name": "anime-shelf-0.1.13.apk",
+      "bytes": 5086537,
+      "sha256": "4b8a48b1981cde0adf22b2753903f686c0f45c5a324c6a4d71ca66153b31154d",
+      "git_blob": "5e6ac85b8e12e63b6fcc177b4373e522ea4e2dcb"
+    },
+    {
+      "name": "anime-shelf-0.1.13-install.zip",
+      "bytes": 5086679,
+      "sha256": "5e896df8062ac7bdc69faaf2c46399201bd6fa11a0ed09d5b4089f231defa6af",
+      "git_blob": "3aaa0e22856bc8268ce775bce5e6198fb5a60662"
+    }
+  ],
+  "verifiedFiles": [
+    {
+      "path": ".github/workflows/build-apk.yml",
+      "sha": "aae6facb96f5289fe6c26d667eb368e5782a2aa9",
+      "size": 15472
+    },
+    {
+      "path": ".github/workflows/deliver-apk.yml",
+      "sha": "7dea2b318baf585370da83693bad5aeae3b6dec9",
+      "size": 2936
+    },
+    {
+      "path": ".gitignore",
+      "sha": "38fdbd2f63a45b58a73074315d972693fcdda13c",
+      "size": 74
+    },
+    {
+      "path": "app/build.gradle",
+      "sha": "2eebfefb833db22fceb09cb7ca1541914643179f",
+      "size": 1624
+    },
+    {
+      "path": "app/src/main/AndroidManifest.xml",
+      "sha": "c3f0d829d009b93f3361460bcc15b36349d3eae3",
+      "size": 1713
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/AnimeDownloadService.java",
+      "sha": "ce786289fc02d904459343b2ad93f861d9d6b0de",
+      "size": 2557
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/AutoBackup.java",
+      "sha": "3b8492b3b16f4b68d254229d8275c7a19f933d4a",
+      "size": 8178
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/BatchDownloadSession.java",
+      "sha": "29fe6646682ab75d0428e94a127d782d881ae9e6",
+      "size": 7761
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/BiliClient.java",
+      "sha": "11b031dba02be444802748c723f3703ffd05e375",
+      "size": 34633
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/CoverLoader.java",
+      "sha": "6f002adeea802b22fbb17046d140699ae5d7f639",
+      "size": 13304
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadCatalogue.java",
+      "sha": "0effb6b33b7c401372334395e0deb3eebc4993db",
+      "size": 7207
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadControls.java",
+      "sha": "0e8031bda81c71030329bef080510183b9cbd073",
+      "size": 1649
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadEstimate.java",
+      "sha": "eef708d6401d320758d4ee7590fe6973aa086a15",
+      "size": 1290
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadNetworkPolicy.java",
+      "sha": "3a95703686f887e291647bfffa4b50ca0c5a8de7",
+      "size": 5190
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadPlan.java",
+      "sha": "19a151a26d7b436cfa2f27d691c289f397cf7010",
+      "size": 3557
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadPolicyDataSource.java",
+      "sha": "3cd8baaee8069e456e464e64898fd34240ce417d",
+      "size": 2503
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadProgressView.java",
+      "sha": "eeb653f1ac10f8348038e0b4b777aac79f824965",
+      "size": 4615
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadQueueService.java",
+      "sha": "ae996d9eacceea437bdcfd251521cb1d27877a13",
+      "size": 6958
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadStatus.java",
+      "sha": "cd7f70fcdb13509fcd395057b776a30e20f5d613",
+      "size": 8698
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadStoragePolicy.java",
+      "sha": "c3c279c6c38e60fdda78266d954b953c1ed135a2",
+      "size": 1803
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/DownloadTelemetry.java",
+      "sha": "7ee16e52895bea5965052bf62d6bd97847660085",
+      "size": 2387
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/EpisodeSidebar.java",
+      "sha": "0b0c5f5e945ad2ff527da0be01f066351efb676e",
+      "size": 5777
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/HomeArtwork.java",
+      "sha": "b704c8b61d2937defc76e0c6f990e9d0ecb1d8f2",
+      "size": 3281
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/LibraryBackup.java",
+      "sha": "fd52d5370fe18e587a29ca0af97a4eab899047f0",
+      "size": 20108
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/LibraryCatalogue.java",
+      "sha": "3e241c6d17024d445bba08e9c6983e65bbfc1836",
+      "size": 3102
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/LoginActivity.java",
+      "sha": "189446bd7340dec19ed4f60f8887f7b9459541cd",
+      "size": 8156
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MainActivity.java",
+      "sha": "2c17a46159697d14e20c7d60a3b13b03fbf8a39a",
+      "size": 173105
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MediaErrors.java",
+      "sha": "386cb2ab9e26ec602c134bb8262b91ab8f12bf17",
+      "size": 8679
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MediaHttpDataSource.java",
+      "sha": "ca66e5da35b0ce8769396d286a6ea748e04c7b5a",
+      "size": 10187
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/MediaRepository.java",
+      "sha": "ded7ac836656a177bf610dd8b22e694012a1d0f7",
+      "size": 33699
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/Models.java",
+      "sha": "5827a955b22f538a97b8b753d1e2700c9707ed9b",
+      "size": 10879
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/OfflineIntegrity.java",
+      "sha": "733f8f201973aea5a219303ecc944ef43419688c",
+      "size": 5345
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PendingDownloads.java",
+      "sha": "7b14501d5cbe86293c13ce9969832ab12efba111",
+      "size": 4378
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PlaybackGestures.java",
+      "sha": "093d7284218a023fe6a619ab7b6929b5bde19afe",
+      "size": 6420
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PlaybackPolicy.java",
+      "sha": "1a593bb3943f77aaa950b5758028c9e76ed6d180",
+      "size": 2333
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PlayerOverlay.java",
+      "sha": "f425ce3125a094bf93c95992182979df4ffc8f72",
+      "size": 36873
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/PreviewMediaDataSource.java",
+      "sha": "1f0d85726e0f311caf7df209b5062eb71f1db067",
+      "size": 6409
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/SeekPreviewLoader.java",
+      "sha": "5620ed853f9717af2b2718a0d16850d12022a967",
+      "size": 10230
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/SkipPlaybackPolicy.java",
+      "sha": "1c22fe0e03dedc339214078b1ecd28e51d319960",
+      "size": 5267
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/SleepTimer.java",
+      "sha": "e9f80d4db641d94bc3aa805b5a9f88273854f13e",
+      "size": 999
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/StorageCleanup.java",
+      "sha": "6cf1d4224289b570a74a721ebf9c62e13d8736ae",
+      "size": 6161
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/Store.java",
+      "sha": "62a4fa2c28a2a7dc758a049b89fa33c8dffe9543",
+      "size": 33613
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/ThemePalette.java",
+      "sha": "c106fe95e3e9dd6f148acb2031203954528d7963",
+      "size": 1773
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/UpdateChecker.java",
+      "sha": "9ff29a82bbfafe9ea65893029da0729ebdeedcc6",
+      "size": 16393
+    },
+    {
+      "path": "app/src/main/java/com/animeshelf/app/VideoDiagnostics.java",
+      "sha": "e13ceb6f5b99094ba01feebfc6cb5adef04d24ca",
+      "size": 9691
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_download.xml",
+      "sha": "d5588719f93b3148e243d002ad2d646306f32ccf",
+      "size": 278
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_launcher.xml",
+      "sha": "33a087b50dece4da606373e19ef6456cb27c107d",
+      "size": 411
+    },
+    {
+      "path": "app/src/main/res/layout/player_surface.xml",
+      "sha": "a864f15fdf7f9d0a9713b639417f919b69fe5806",
+      "size": 336
+    },
+    {
+      "path": "app/src/main/res/values/strings.xml",
+      "sha": "e849d64cb76d3857baf822a9c9eb46e2b5fc2d02",
+      "size": 1219
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/AutoBackupTest.java",
+      "sha": "c9ed0bf8c532cb94142c52938eec5744c572eece",
+      "size": 6896
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/BatchDownloadSessionTest.java",
+      "sha": "fe2178a396ac63af7b4344bbb7aa648ae0681d88",
+      "size": 9714
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/CoverLoaderTest.java",
+      "sha": "3a59420afa060746f25febfff319a27093d5a760",
+      "size": 12950
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadCatalogueTest.java",
+      "sha": "5bc7f07dbbe5f4f29cc160d4a7c92bf88dc87815",
+      "size": 7135
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadEstimateTest.java",
+      "sha": "9ecf29e9574fb8d556bb7ebde6129a4979dc6aaa",
+      "size": 3409
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadNetworkPolicyTest.java",
+      "sha": "ea0dd35a219f6aa9ef74b0f208f6cb1df50d97fb",
+      "size": 4893
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadPlanTest.java",
+      "sha": "7d902c315c3b2eeabf4126c7051d490f82a74513",
+      "size": 3831
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadPolicyDataSourceTest.java",
+      "sha": "bebe3da98ded4abd95d4080a725326649b597126",
+      "size": 6601
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadProgressViewTest.java",
+      "sha": "d52c37acace6ae6d91dce37f1647a30fb6d5d458",
+      "size": 6187
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadStatusTest.java",
+      "sha": "b665f681eb7a42c4a4c071943f9b46081690418a",
+      "size": 8108
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadStoragePolicyTest.java",
+      "sha": "b0fa57fa9cc39b917da742405bcdea2a143dafa5",
+      "size": 1961
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/DownloadTelemetryTest.java",
+      "sha": "71ac97271e5195a6a8dbbfb8414a596c4546e292",
+      "size": 3163
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/EpisodeSidebarTest.java",
+      "sha": "8b1e541a650b60e718fd8b4a6d0100e591147ce6",
+      "size": 4231
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/HomeDesignTest.java",
+      "sha": "70b0a5229c5aa86540ce3b23d08418f271ab71e6",
+      "size": 10709
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/LibraryBackupTest.java",
+      "sha": "cc7fa93a3405afe8f76a8d72171d782f1f45108e",
+      "size": 33545
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/LibraryCatalogueTest.java",
+      "sha": "c8684ae27edc4f1f41b56ca0bf0f9ec874217c35",
+      "size": 6027
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/LibraryUpgradeTest.java",
+      "sha": "f9928a15d89868a7a1c73076c1042e5ad9b44a08",
+      "size": 8985
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainEnhancementTest.java",
+      "sha": "369c81bf23aa40480d4bf1dfdc056578645e9334",
+      "size": 23770
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainFeatureTest.java",
+      "sha": "2aabfcfffb961abe87aae8f06289fc61c6db2afa",
+      "size": 24877
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainLibraryTest.java",
+      "sha": "d9ddbcc415b32cc56d3b7a3a0f8e196192804292",
+      "size": 11581
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainNavigationTest.java",
+      "sha": "44002516c18da677422e515b9e5062c5855b2540",
+      "size": 26453
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainPlaybackContinuityTest.java",
+      "sha": "1bd3c799e822fe2054a0a0743d1b009fa8fa762c",
+      "size": 32169
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MainSelectionTest.java",
+      "sha": "b0a8f5f22accfed94c857e521af73914350f9b8b",
+      "size": 19066
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MediaErrorsTest.java",
+      "sha": "7bf28f6916243579117eed1c7661eb9f00b25606",
+      "size": 10045
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/MediaHttpDataSourceTest.java",
+      "sha": "9a5292797ace9ba878a35265d59f23b110ca3983",
+      "size": 19015
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/OfflineIntegrityTest.java",
+      "sha": "727b47b3cbe0762207ad978508a4390a6487f162",
+      "size": 4347
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlaybackGesturesTest.java",
+      "sha": "fb035a9c0a797caed9eba48a6b932a4a3d025864",
+      "size": 8398
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlaybackPolicyTest.java",
+      "sha": "2686837d6e2d2e0b4dd22e0239840ccc9bbae156",
+      "size": 7877
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlayerControlsLayoutTest.java",
+      "sha": "6502aa38235d5c7d224526a9cc4bd565146258ec",
+      "size": 14067
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlayerOverlayDensityTest.java",
+      "sha": "f222b4b514300fedae6e8e39dfd52f69437ce619",
+      "size": 7191
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PlayerOverlayTest.java",
+      "sha": "52c1f5bff360e20e42f4505c71f5b3bb8ff5877c",
+      "size": 38067
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PreviewCacheBoundaryTest.java",
+      "sha": "331a828069b759b19ec4e3e805eea142690674bb",
+      "size": 2857
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/PreviewMediaDataSourceTest.java",
+      "sha": "e261905835668a3cef1bfc03f31b9c075dcec087",
+      "size": 11265
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/SeekPreviewLoaderTest.java",
+      "sha": "2f79a67a71653953b005082879d17bf887f3753d",
+      "size": 9023
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/SkipPlaybackPolicyTest.java",
+      "sha": "2530c5a42887f06e2d8f94291de4c8099c63536d",
+      "size": 10630
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/StoreDownloadSettingsTest.java",
+      "sha": "ead32899b0df616037f329b499046e1b168934a9",
+      "size": 5163
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/StorePlaybackPreferenceTest.java",
+      "sha": "36512e779a15d82085afb11777b8bd10c7bee3a1",
+      "size": 5394
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/StoreSettingsTest.java",
+      "sha": "dc5e35e58d843534f999f5f0b4d08f4cdb45d076",
+      "size": 10676
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/UpdateCheckerTest.java",
+      "sha": "20f48a53eb33d130ace91470425c0ba0363c65f4",
+      "size": 14730
+    },
+    {
+      "path": "app/src/test/java/com/animeshelf/app/VideoDiagnosticsTest.java",
+      "sha": "3230a4f268fb7601d4bda61175df51611fceb7bf",
+      "size": 7297
+    },
+    {
+      "path": "build.gradle",
+      "sha": "5b7ccba7c566afb5057eaea1b10b99b083851fe4",
+      "size": 73
+    },
+    {
+      "path": "gradle/wrapper/gradle-wrapper.properties",
+      "sha": "09523c0e5490700d1a647ecf95309b5f7f9a8199",
+      "size": 250
+    },
+    {
+      "path": "gradle.properties",
+      "sha": "2e11322913e56c04783e2f5dbe7927b9e0539007",
+      "size": 109
+    },
+    {
+      "path": "gradlew",
+      "sha": "145bbb6cd891a1239f5771716ed3df8f7ff69168",
+      "size": 793
+    },
+    {
+      "path": "settings.gradle",
+      "sha": "e44844742e7607990c92cb1fb1197dc2acd19d67",
+      "size": 327
+    },
+    {
+      "path": "tests/ParserSelfTest.java",
+      "sha": "9ce4b6de84db773f4887c6fd0ec0dd0779e40bb6",
+      "size": 29362
+    },
+    {
+      "path": "tests/probe_media_request.py",
+      "sha": "2ceb39b1f49012a9d74f8f5043399325937b8b2a",
+      "size": 5263
+    },
+    {
+      "path": "downloads/anime-shelf-0.1.13.apk",
+      "sha": "5e6ac85b8e12e63b6fcc177b4373e522ea4e2dcb",
+      "size": 5086537
+    },
+    {
+      "path": "downloads/anime-shelf-0.1.13-install.zip",
+      "sha": "3aaa0e22856bc8268ce775bce5e6198fb5a60662",
+      "size": 5086679
+    }
+  ],
+  "latestManifest": {
+    "name": "latest.json",
+    "bytes": 1067,
+    "sha256": "18736ce490d591c7cf9e284457193f80eb5a4c29fefd21a58891c0551cd2257d",
+    "git_blob": "561b248cb04830e818a2bafc4451ab18036df255"
+  },
+  "previousArchives": [
+    {
+      "branch": "archive/anime-shelf-0.1.10-20261026",
+      "commit": "81293df64257ef7ff1d5b2e3d4d4ccd63c48b5f2"
+    },
+    {
+      "branch": "archive/anime-shelf-0.1.6-20261023",
+      "commit": "1f21e9b8ca9d009797f20d95551558472f1021f7"
+    }
+  ],
+  "excludes": [
+    "phone library and viewing history",
+    "downloaded media",
+    "login sessions and credentials",
+    "signing private key"
+  ],
+  "restoreNotes": "Keep archive refs fixed. Restore on a new branch with the original package and signing key, a higher versionCode, and compatible data migrations. Do not uninstall to downgrade."
+}
