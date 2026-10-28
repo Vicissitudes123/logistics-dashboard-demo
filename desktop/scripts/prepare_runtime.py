@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import struct
 import sys
 import time
 import urllib.request
@@ -91,6 +92,55 @@ def native_archive(kind: str) -> dict:
     return {'archive': archive.name, 'sha256': sha(archive), 'bytes': archive.stat().st_size,
             'runtimeFiles': [{'name': p.name, 'sha256': sha(p), 'bytes': p.stat().st_size} for p in sorted(runtime.iterdir()) if p.is_file()]}
 
+def vulkan_loader() -> dict:
+    """Bundle the official loader beside both dependent runtimes; no installer."""
+    info = LOCK['vulkanLoader']
+    archive = download(info['url'], ROOT / '.artifacts' / info['url'].rsplit('/', 1)[-1], info['sha256'])
+    candidates = []
+    notices = []
+    with zipfile.ZipFile(archive) as package:
+        for item in package.infolist():
+            relative = Path(item.filename.replace('\\', '/'))
+            if item.is_dir() or relative.is_absolute() or '..' in relative.parts:
+                continue
+            if relative.name.lower() == 'vulkan-1.dll':
+                data = package.read(item)
+                if len(data) < 64 or data[:2] != b'MZ':
+                    continue
+                offset = struct.unpack_from('<I', data, 0x3c)[0]
+                if offset + 6 <= len(data) and data[offset:offset+4] == b'PE\0\0' and struct.unpack_from('<H', data, offset+4)[0] == 0x8664:
+                    candidates.append((item.filename, data))
+            elif any(term in relative.name.lower() for term in ('license', 'copyright', 'notice', 'copying')):
+                target = ROOT / 'licenses/upstream/vulkan-loader' / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(package.read(item))
+                notices.append(relative.as_posix())
+    if len(candidates) != 1 or not notices:
+        raise RuntimeError(f'Official Vulkan components must contain one x64 loader and license notices: {len(candidates)}, {notices}')
+    name, data = candidates[0]
+    for kind in ('mpv', 'ffmpeg'):
+        (ROOT / 'runtime' / kind / 'vulkan-1.dll').write_bytes(data)
+    receipt = {'archive': archive.name, 'version': info['version'], 'sha256': sha(archive),
+               'bytes': archive.stat().st_size, 'dllMember': name, 'dllSha256': hashlib.sha256(data).hexdigest(),
+               'dllBytes': len(data), 'machine': 'x64', 'licenses': notices, 'checksumSource': info['checksumSource']}
+    # Keep this receipt even if the later dependency load check fails.
+    (REPORTS / 'vulkan-loader.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')
+    return receipt
+
+def verify_native_dependencies() -> dict:
+    import ctypes
+    handles = [os.add_dll_directory(str(ROOT / 'runtime' / kind)) for kind in ('mpv', 'ffmpeg')]
+    try:
+        loader = ctypes.WinDLL(str(ROOT / 'runtime/mpv/vulkan-1.dll'))
+        assert loader.vkGetInstanceProcAddr, 'Vulkan loader export missing'
+        mpv_path = next(path for path in (ROOT / 'runtime/mpv').glob('*.dll') if path.name.lower() in ('mpv-2.dll', 'libmpv-2.dll'))
+        media = ctypes.WinDLL(str(mpv_path))
+        assert media.mpv_client_api_version, 'libmpv API export missing'
+        version = run([ROOT / 'runtime/ffmpeg/ffmpeg.exe', '-version'], report='ffmpeg-version.txt')
+        return {'vulkanLoaded': True, 'mpvLoaded': True, 'ffmpegVersion': version.splitlines()[0]}
+    finally:
+        for handle in handles: handle.close()
+
 def java_bridge() -> dict:
     home = Path(os.environ['JAVA_HOME'])
     executable = '.exe' if os.name == 'nt' else ''
@@ -153,6 +203,7 @@ def copy_python_licenses() -> None:
 def main() -> None:
     if os.name != 'nt': raise SystemExit('Use a Windows x64 runner to build the Windows application')
     receipt = {'schemaVersion': 1, 'lock': LOCK, 'mpv': native_archive('mpv'), 'ffmpeg': native_archive('ffmpeg'),
+               'vulkanLoader': vulkan_loader(), 'nativeDependencies': verify_native_dependencies(),
                'java': java_bridge(), 'python': sys.version, 'dependencies': {p: importlib.metadata.version(p) for p in ('PySide6-Essentials', 'shiboken6', 'python-mpv', 'qrcode', 'pyinstaller')}}
     copy_python_licenses()
     (REPORTS / 'runtime-verification.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

@@ -32,7 +32,8 @@ def main():
     assert data[:2] == b'MZ'
     offset = struct.unpack_from('<I', data, 0x3c)[0]
     assert data[offset:offset+4] == b'PE\0\0' and struct.unpack_from('<H', data, offset+4)[0] == 0x8664, 'Expected Windows x64 PE'
-    for relative in ('_internal/runtime/java/bin/java.exe', '_internal/runtime/ffmpeg/ffmpeg.exe', '_internal/bridge/anime-bridge.jar'):
+    for relative in ('_internal/runtime/java/bin/java.exe', '_internal/runtime/ffmpeg/ffmpeg.exe', '_internal/bridge/anime-bridge.jar',
+                     '_internal/runtime/mpv/vulkan-1.dll', '_internal/runtime/ffmpeg/vulkan-1.dll'):
         assert (output / relative).is_file(), relative
     assert any((output / '_internal/runtime/mpv').glob('*mpv*2.dll'))
     tests = ET.parse(REPORTS / 'desktop-tests.xml').getroot()

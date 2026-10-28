@@ -20,6 +20,16 @@ FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/9a861e968
 See mpv-Copyright.txt, GPL-2.0.txt and upstream archive notices. These builds may
 contain GPL-enabled features; do not relabel them as proprietary or LGPL-only.
 
+Vulkan loader (LunarG official Runtime Components 1.4.363.0):
+https://vulkan.lunarg.com/sdk/home/
+https://github.com/KhronosGroup/Vulkan-Loader
+build-lock.json pins the official components archive and its published SHA-256.
+Only the x64 vulkan-1.dll and original license notices are redistributed. No
+driver, runtime installer, registry changes or administrator access are needed.
+The loader is retained beside both libmpv and FFmpeg because both binaries
+import it even when the selected video output is Direct3D 11. Its original
+license notices are copied into upstream/vulkan-loader during preparation.
+
 PySide6 / Shiboken / Qt for Python (6.10.0):
 https://code.qt.io/pyside/pyside-setup.git/tag/?h=v6.10.0
 https://doc.qt.io/qtforpython-6/licenses.html

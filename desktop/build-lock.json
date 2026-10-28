@@ -14,6 +14,13 @@
     "url": "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/ffmpeg-x86_64-git-9a861e968.7z",
     "sha256": "fc9c135b799b410ffc78517f428904c299bc64cd8144f21f63f84fcd8c35ea19"
   },
+  "vulkanLoader": {
+    "version": "1.4.363.0",
+    "url": "https://sdk.lunarg.com/sdk/download/1.4.363.0/windows/VulkanRT-X64-1.4.363.0-Components.zip",
+    "sha256": "a25a927aa8b9f0371048f1861cf88ac3b9bc9b1fb332c42d897c8ab32695769a",
+    "checksumSource": "https://vulkan.lunarg.com/sdk/home/",
+    "sourceUrl": "https://github.com/KhronosGroup/Vulkan-Loader"
+  },
   "buildRecipes": {
     "url": "https://github.com/shinchiro/mpv-winbuild-cmake/tree/1f8d2e76255abc48f0456d9be99b4cab9c6566e6",
     "revision": "1f8d2e76255abc48f0456d9be99b4cab9c6566e6"
