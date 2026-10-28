@@ -426,6 +426,10 @@ public class MainPlaybackContinuityTest {
             org.robolectric.RuntimeEnvironment.setQualifiers("w" + width + "dp-h800dp-" + (width >= 800 ? "land" : "port") + "-mdpi");
             android.content.res.Configuration resized = new android.content.res.Configuration(resources.getConfiguration());
             controller.configurationChange(resized, resources.getDisplayMetrics(), previous.diff(resized));
+            // Robolectric relayoutWindow() does not resize its cached frame; send the window-manager event too.
+            Object viewRoot = org.robolectric.util.ReflectionHelpers.callInstanceMethod(activity.getWindow().getDecorView(), "getViewRootImpl");
+            org.robolectric.shadows.ShadowViewRootImpl shadowRoot = org.robolectric.shadow.api.Shadow.extract(viewRoot);
+            shadowRoot.callDispatchResized(); idle();
             assertSame("Window changes must not recreate playback", activity, controller.get());
             for (int pass = 0; pass < 3; pass++) { root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY)); root.layout(0, 0, width, 800); idle(); }
             android.widget.LinearLayout workspace = (android.widget.LinearLayout) get("workspace");

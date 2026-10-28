@@ -133,6 +133,10 @@ public class TabletLayoutTest {
         org.robolectric.RuntimeEnvironment.setQualifiers("w" + width + "dp-h" + height + "dp-" + (width >= height ? "land" : "port") + "-mdpi");
         android.content.res.Configuration resized = new android.content.res.Configuration(resources.getConfiguration());
         controller.configurationChange(resized, resources.getDisplayMetrics(), previous.diff(resized));
+        // Robolectric relayoutWindow() does not resize its cached frame; send the window-manager event too.
+        Object viewRoot = org.robolectric.util.ReflectionHelpers.callInstanceMethod(activity.getWindow().getDecorView(), "getViewRootImpl");
+        org.robolectric.shadows.ShadowViewRootImpl shadowRoot = org.robolectric.shadow.api.Shadow.extract(viewRoot);
+        shadowRoot.callDispatchResized(); idle();
         assertSame("Handled window changes must retain the activity", activity, controller.get());
         View root = (View) field("root");
         for (int i = 0; i < 4; i++) { root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)); root.layout(0, 0, width, height); idle(); }
