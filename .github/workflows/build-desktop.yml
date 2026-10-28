@@ -1,0 +1,103 @@
+name: Build Windows desktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [anime-shelf-apk]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/build-desktop.yml'
+      - 'app/src/main/java/com/animeshelf/app/BiliClient.java'
+      - 'app/src/main/java/com/animeshelf/app/Models.java'
+      - 'tests/ParserSelfTest.java'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: anime-shelf-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DESKTOP_VERSION: '0.1.13.1'
+  RELEASE_TAG: anime-shelf-desktop-v0.1.13.1
+  PYTHONUTF8: '1'
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            desktop/requirements.txt
+            desktop/requirements-build.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install pinned desktop dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check -r desktop/requirements-build.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build, test and verify portable Windows application
+        shell: pwsh
+        run: ./desktop/build_windows.ps1 -SkipInstall
+      - name: Upload small verification reports even after a failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anime-shelf-desktop-verification
+          if-no-files-found: warn
+          path: |
+            desktop/reports/*.json
+            desktop/reports/*.xml
+            desktop/reports/*.txt
+            desktop/reports/*.png
+            desktop/reports/native-fixture/*.jpg
+            desktop/licenses/**
+      - name: Publish verified portable ZIP and exact source snapshot
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:RELEASE_TAG
+          $repo = $env:GITHUB_REPOSITORY
+          $ref = gh api "repos/$repo/git/ref/tags/$tag" 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $resolved = $ref | ConvertFrom-Json
+            if ($resolved.object.type -ne 'commit' -or $resolved.object.sha -ne $env:GITHUB_SHA) {
+              throw 'This version tag already points to another source commit. Increase the version instead of replacing a published release.'
+            }
+            # A completed release is immutable. Permit re-upload only if its verified
+            # assets are byte-identical; otherwise fail instead of clobbering them.
+            $old = gh release view $tag --repo $repo --json assets | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Existing tag has no readable release' }
+            $expected = Get-Content desktop/dist/release/desktop-release.json -Raw | ConvertFrom-Json
+            $asset = $old.assets | Where-Object { $_.name -eq 'desktop-release.json' }
+            if (-not $asset) { throw 'Existing release is incomplete; inspect it before retrying publication' }
+            $previous = Invoke-RestMethod -Uri $asset.url
+            if ($previous.zipSha256 -ne $expected.zipSha256 -or $previous.sourceCommit -ne $expected.sourceCommit) {
+              throw 'Existing release differs; refusing to replace published binaries'
+            }
+            Write-Output 'Identical verified release is already published.'
+          } else {
+            @"
+          Windows 11 x64 desktop edition. Download the Windows ZIP, extract the entire folder, and run AnimeShelf.exe. Python, Java, mpv and FFmpeg are included.
+
+          Source: $env:GITHUB_SHA
+          Native dependencies are pinned and SHA-256 checked. The separate source ZIP and bundled license notices describe the build inputs.
+          This test executable is not commercially code signed. Checksums verify bytes, not publisher trust. CI verifies local dual-track media and app startup; physical HDR output still depends on the user's device.
+          "@ | Set-Content -Encoding utf8 desktop/reports/release-notes.txt
+            $assets = Get-ChildItem desktop/dist/release -File | ForEach-Object { $_.FullName }
+            gh release create $tag --repo $repo --target $env:GITHUB_SHA --title "番匣 Windows $env:DESKTOP_VERSION" --notes-file desktop/reports/release-notes.txt @assets
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }
+          }
+          "Download: https://github.com/$repo/releases/tag/$tag" >> $env:GITHUB_STEP_SUMMARY

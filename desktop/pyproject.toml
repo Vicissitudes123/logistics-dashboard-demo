@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anime-shelf-desktop"
+version = "0.1.13.1"
+description = "番匣 Windows desktop client"
+requires-python = ">=3.12,<3.13"
+dependencies = ["PySide6-Essentials==6.10.0", "shiboken6==6.10.0", "python-mpv==1.0.8", "qrcode==8.2"]
+
+[tool.setuptools.packages.find]
+include = ["anime_shelf*"]

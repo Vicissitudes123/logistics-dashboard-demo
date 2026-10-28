@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+build/
+dist/
+runtime/
+.artifacts/
+bridge/classes/
+bridge/parser-classes/
+bridge/deps/
+bridge/anime-bridge.jar
+licenses/package-licenses/
+licenses/upstream/
+reports/

@@ -1,0 +1,42 @@
+Anime Shelf / 番匣 Windows edition — bundled runtime notices
+
+This package contains open-source runtimes. Their licenses and notices remain
+applicable to their individual components. Native libraries are shipped as
+separate, replaceable DLLs. No account credentials or signing private keys are
+included in this distribution.
+
+Application source and build scripts:
+https://github.com/Vicissitudes123/logistics-dashboard-demo/tree/anime-shelf-apk/desktop
+The release's desktop-release.json records the exact application source commit.
+
+mpv / libmpv and FFmpeg:
+Windows binaries are third-party builds by shinchiro, linked from the mpv
+project's installation page https://mpv.io/installation/ . build-lock.json
+records the exact archives, revisions and SHA-256 digests. The original build
+recipes are pinned to:
+https://github.com/shinchiro/mpv-winbuild-cmake/tree/1f8d2e76255abc48f0456d9be99b4cab9c6566e6
+mpv source: https://github.com/mpv-player/mpv/tree/e471496c56
+FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/9a861e968
+See mpv-Copyright.txt, GPL-2.0.txt and upstream archive notices. These builds may
+contain GPL-enabled features; do not relabel them as proprietary or LGPL-only.
+
+PySide6 / Shiboken / Qt for Python (6.10.0):
+https://code.qt.io/pyside/pyside-setup.git/tag/?h=v6.10.0
+https://doc.qt.io/qtforpython-6/licenses.html
+Wheel license files are copied to package-licenses during the build. Qt shared
+libraries are unmodified and remain separate from the application executable.
+
+python-mpv (1.0.8): https://github.com/jaseg/python-mpv
+qrcode (8.2): https://github.com/lincolnloop/python-qrcode
+Python: https://www.python.org/psf/license/
+Eclipse Temurin OpenJDK: https://adoptium.net/
+Java org.json (20240303): https://github.com/stleary/JSON-java/tree/20240303
+Their distributed license files and OpenJDK legal directory accompany the app.
+
+Build tool PyInstaller is not a user requirement. Its bootloader license
+exception permits distribution of bundled applications subject to their own
+and their dependencies' licenses.
+
+This test application has no paid Windows code-signing certificate. Windows
+Authenticode status is reported as unsigned; a SHA-256 checksum establishes
+file identity, not a trusted publisher signature.
