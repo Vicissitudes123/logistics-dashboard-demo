@@ -45,6 +45,7 @@ def main():
     signature = json.loads((REPORTS / 'authenticode.json').read_text(encoding='utf-8-sig'))
     assert ui.get('ok') is True, 'Packaged UI smoke must explicitly report ok:true'
     shutil.copytree(ROOT / 'licenses', output / 'licenses', dirs_exist_ok=True)
+    shutil.copyfile(ROOT / 'README.md', output / 'README.md')
     (output / '使用说明.txt').write_text('番匣 Windows 11 测试版 ' + VERSION + '\n\n解压整个文件夹后运行 AnimeShelf.exe，不能单独移动 EXE。无需另外安装 Python、Java 或 mpv。\n片库、进度与下载文件保存在本机应用数据目录，不在此安装文件夹。更新时先退出旧程序，再解压新包运行；不要删除本机数据目录。\n登录使用 B站官方扫码流程，二维码在本机绘制。请勿分享登录信息。\nHDR 实际输出取决于 Windows HDR 设置、显示器、显卡和视频源；测试报告不代表真机 HDR 认证。\n这是没有商业代码签名证书的测试版；SHA-256 用于核对文件完整性，不等于可信发布者签名。\n', encoding='utf-8')
     assets = ROOT / 'dist/release'; assets.mkdir(exist_ok=True)
     name = f'anime-shelf-desktop-{VERSION}-windows-x64.zip'

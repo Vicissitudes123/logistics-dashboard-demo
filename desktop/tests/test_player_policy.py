@@ -48,7 +48,8 @@ class SourcePolicyTests(unittest.TestCase):
             plan = source_plan({'id': 'ep'}, quality, task)
             self.assertTrue(plan.offline)
             self.assertFalse(plan.headers)
-            self.assertEqual(plan.videos, (str(video),))
+            self.assertEqual(plan.videos, (str(video.resolve()),))
+            self.assertEqual(plan.audios, (str(audio.resolve()),))
             audio.unlink()
             with self.assertRaises(PlaybackSourceError):
                 source_plan({'id': 'ep'}, quality, task)
