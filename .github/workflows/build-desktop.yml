@@ -19,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DESKTOP_VERSION: '0.1.13.1'
-  RELEASE_TAG: anime-shelf-desktop-v0.1.13.1
+  DESKTOP_VERSION: '0.1.13.2'
+  RELEASE_TAG: anime-shelf-desktop-v0.1.13.2
   PYTHONUTF8: '1'
 
 jobs:

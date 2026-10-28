@@ -77,7 +77,7 @@ def _json(url, limit=1024*1024):
     except (OSError, ValueError, urllib.error.URLError): raise UpdateError('无法读取更新信息，请检查网络后重试') from None
 
 
-def check_update(current_version='0.1.13.1', *, fetch=None):
+def check_update(current_version='0.1.13.2', *, fetch=None):
     version_tuple(current_version)
     fetch = fetch or _json
     releases = fetch(API_URL)

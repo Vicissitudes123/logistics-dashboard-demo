@@ -39,18 +39,42 @@ def main(argv=None):
         report=Path(args.smoke_test);report.parent.mkdir(parents=True,exist_ok=True)
         def verify():
             result={'ok':False,'phase':'native-window','windowSize':[window.width(),window.height()],'screenshots':[]}
+            def capture(name):
+                path=report.with_name(name)
+                pixmap=window.grab()
+                if pixmap.isNull():raise RuntimeError('Window capture is empty: '+name)
+                saved=pixmap.save(str(path),'PNG')
+                if not saved or not path.is_file() or path.stat().st_size<100:
+                    raise RuntimeError('Window screenshot was not saved: '+name)
+                if path.read_bytes()[:8]!=b'\x89PNG\r\n\x1a\n':
+                    raise RuntimeError('Window screenshot has no PNG signature: '+name)
+                result['screenshots'].append(path.name)
             try:
-                assert window.isVisible() and window.width()>=1000
+                # Frozen builds use optimize=1. Assertions must never perform smoke
+                # checks or produce artifacts, because Python removes them under -O.
+                if not window.isVisible() or window.width()<1000:
+                    raise RuntimeError('Main window is not visible at the required desktop size')
                 window.player._ensure_engine()
-                assert window.player._engine is not None
+                if window.player._engine is None:
+                    raise RuntimeError('Native media engine was not initialized')
                 result['nativePlayerInitialized']=True
                 for page in ('library','downloads','settings'):
-                    window.navigate(page);app.processEvents();path=report.with_name('desktop-'+page+'.png');assert window.grab().save(str(path));result['screenshots'].append(path.name)
-                window.open_series('ss1');app.processEvents();path=report.with_name('desktop-episodes.png');assert window.grab().save(str(path));result['screenshots'].append(path.name)
-                assert window.episode_title.text()=='擅长捉弄的高木同学'
-                window.set_fullscreen(True);app.processEvents();assert window._full_screen
-                window.toggle_episode_panel();app.processEvents();assert window.episode_panel.isVisible()
-                window.set_fullscreen(False);app.processEvents();result['ok']=True;result['phase']='completed'
+                    window.navigate(page);app.processEvents();capture('desktop-'+page+'.png')
+                window.open_series('ss1');app.processEvents();capture('desktop-episodes.png')
+                if window.episode_title.text()!='擅长捉弄的高木同学':
+                    raise RuntimeError('Opening the series did not display the selected episode list')
+                window.set_fullscreen(True);app.processEvents()
+                if not window._full_screen or not window.isFullScreen():
+                    raise RuntimeError('The player did not enter fullscreen')
+                window.toggle_episode_panel();app.processEvents()
+                if not window.episode_panel.isVisible():
+                    raise RuntimeError('The fullscreen episode panel did not open')
+                window.set_fullscreen(False);app.processEvents()
+                if window._full_screen or window.isFullScreen():
+                    raise RuntimeError('The player did not leave fullscreen')
+                if len(result['screenshots'])!=4:
+                    raise RuntimeError('Expected four desktop screenshots')
+                result['ok']=True;result['phase']='completed'
             except Exception as error:result.update(error=str(error),traceback=traceback.format_exc())
             report.write_text(json.dumps(result,ensure_ascii=False,indent=2),'utf-8');window._quitting=True;window.close();app.exit(0 if result['ok'] else 1)
         QTimer.singleShot(1500,verify)

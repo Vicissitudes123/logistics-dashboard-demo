@@ -100,7 +100,7 @@ class CoverLoader(QObject):
                 def redirect_request(inner, req, fp, code, msg, headers, newurl):
                     if not CoverLoader.normalized_url(newurl): raise ValueError("封面重定向无效")
                     return super().redirect_request(req,fp,code,msg,headers,newurl)
-            request = urllib.request.Request(url, headers={"User-Agent":"AnimeShelf/0.1.13.1","Referer":"https://www.bilibili.com/"})
+            request = urllib.request.Request(url, headers={"User-Agent":"AnimeShelf/0.1.13.2","Referer":"https://www.bilibili.com/"})
             with urllib.request.build_opener(Redirect()).open(request, timeout=15) as response:
                 data = response.read(8*1024*1024+1)
             if self._closed.is_set(): raise RuntimeError('封面加载已取消')
