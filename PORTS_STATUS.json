@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-28T06:04:58.228802+00:00",
+  "baselineMobileVersion": "0.1.13",
+  "desktop": {
+    "version": "0.1.13.2",
+    "platform": "Windows 11 x64",
+    "sourceCommit": "23c587d8f7d3ad421ce2191f455dd470c9826387",
+    "workflowRun": 40641226838,
+    "releaseTag": "anime-shelf-desktop-v0.1.13.2",
+    "download": "https://github.com/Vicissitudes123/logistics-dashboard-demo/releases/download/anime-shelf-desktop-v0.1.13.2/anime-shelf-desktop-0.1.13.2-windows-x64.zip",
+    "bytes": 148213811,
+    "sha256": "7684556f4082fd804f169d4d0034e5762c9e50fbda554db60fd587a5e267c249",
+    "tests": {
+      "tests": 87,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 0
+    },
+    "parserAssertions": 132,
+    "nativePlayerSmokePassed": true,
+    "packagedUiSmokePassed": true,
+    "authenticode": "NotSigned",
+    "sourceArchiveSha256": "b3c70d63913f93c9ce5441be10dbc9db7b940ea5337f8b4859353de1a9a2cd1f"
+  },
+  "tablet": {
+    "version": "0.1.13.1",
+    "versionCode": 15,
+    "targetDevice": "Huawei MatePad Pro 2021",
+    "sourceCommit": "d1bb12d340f6265136ff7a80c83450a1ca1f16f7",
+    "deliveryCommit": "29bb8bd0075ddb305752c0c41e0850d6b3081560",
+    "workflowRun": 40639951949,
+    "download": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/tablet/anime-shelf-0.1.13.1.apk",
+    "zipDownload": "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/tablet/anime-shelf-0.1.13.1-install.zip",
+    "apkBytes": 5092149,
+    "apkSha256": "0195896ee5ad5cde4a66ac2a1d9ca819ad5cf97e16011d9af6e28b2849d1217b",
+    "zipSha256": "fe671e60ddbc13a73f1ac580d1c3b75f9b4c840f0071bb51b4888ef00b85d554",
+    "certificateSha256": "0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c",
+    "tests": {
+      "tests": 354,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "parserAssertions": 132,
+    "lintErrors": 0,
+    "lintWarnings": 36,
+    "harmonyVersion": "unknown",
+    "actualDeviceCompatibilityVerified": false,
+    "format": "Android-compatible tablet APK, not native HarmonyOS HAP"
+  },
+  "originalRefsVerifiedUnchanged": [
+    {
+      "ref": "main",
+      "sha": "414ff14c6c5a2bc34adee7fa4cbf40893c67817b"
+    },
+    {
+      "ref": "archive/anime-shelf-0.1.13-20261028",
+      "sha": "f8e5125f5259c80628b7fa2db1993a7733527ca1"
+    },
+    {
+      "ref": "archive/anime-shelf-0.1.10-20261026",
+      "sha": "81293df64257ef7ff1d5b2e3d4d4ccd63c48b5f2"
+    },
+    {
+      "ref": "archive/anime-shelf-0.1.6-20261023",
+      "sha": "1f21e9b8ca9d009797f20d95551558472f1021f7"
+    }
+  ],
+  "limits": [
+    "Physical device HDR and account-specific streaming require user testing.",
+    "Desktop native smoke uses synthetic media and a null audio output; physical sound output is not certified.",
+    "Tablet installation requires a system able to run APKs.",
+    "Library backups migrate metadata and progress, not video files or credentials.",
+    "Data is per-device; automatic cloud synchronization is not provided.",
+    "Desktop brightness adjusts the video image, not display backlight."
+  ],
+  "guides": [
+    "desktop/README.md",
+    "tablet/README.md"
+  ]
+}
