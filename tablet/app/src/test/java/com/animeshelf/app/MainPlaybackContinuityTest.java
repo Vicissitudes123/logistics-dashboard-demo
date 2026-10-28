@@ -421,9 +421,16 @@ public class MainPlaybackContinuityTest {
         FakePlayer fake = start(0, profile, true); fake.ready(); fake.position = 65000; fake.speed = 1.5f;
         View root = (View) get("root");
         for (int width : new int[]{1280, 1024, 840, 839, 600, 360, 1280}) {
+            android.content.res.Resources resources = activity.getResources();
+            android.content.res.Configuration previous = new android.content.res.Configuration(resources.getConfiguration());
+            org.robolectric.RuntimeEnvironment.setQualifiers("w" + width + "dp-h800dp-" + (width >= 800 ? "land" : "port") + "-mdpi");
+            android.content.res.Configuration resized = new android.content.res.Configuration(resources.getConfiguration());
+            controller.configurationChange(resized, resources.getDisplayMetrics(), previous.diff(resized));
+            assertSame("Window changes must not recreate playback", activity, controller.get());
             for (int pass = 0; pass < 3; pass++) { root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY)); root.layout(0, 0, width, 800); idle(); }
             android.widget.LinearLayout workspace = (android.widget.LinearLayout) get("workspace");
-            assertEquals(width >= 840 ? android.widget.LinearLayout.HORIZONTAL : android.widget.LinearLayout.VERTICAL, workspace.getOrientation());
+            assertEquals("Actual window width", width, root.getWidth());
+            assertEquals("Window " + width, width >= 840 ? android.widget.LinearLayout.HORIZONTAL : android.widget.LinearLayout.VERTICAL, workspace.getOrientation());
             assertSame(fake.player, get("player")); assertFalse(fake.released); assertEquals(65000, fake.position); assertEquals(1.5f, fake.speed, .001f); assertTrue(fake.playWhenReady);
             View video = (View) get("videoFrame"); assertTrue(video.getWidth() >= 300); assertTrue(video.getHeight() >= 164);
         }

@@ -332,7 +332,7 @@ public class MainEnhancementTest {
     }
 
     private static UpdateChecker.Release release(int minSdk) throws Exception {
-        String root = "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/";
+        String root = "https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/tablet/";
         JSONObject document = new JSONObject().put("schemaVersion", 1).put("versionCode", 999).put("versionName", "0.9.9")
             .put("packageName", "com.animeshelf.app").put("minSdk", minSdk)
             .put("apkUrl", root + "anime-shelf-0.9.9.apk").put("zipUrl", root + "anime-shelf-0.9.9-install.zip")

@@ -231,9 +231,6 @@ public final class MainActivity extends Activity {
             return insets;
         });
         root.requestApplyInsets();
-        root.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
-            if (playerPanel != null && (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop)) resizeVideo();
-        });
         header = column(); header.setPadding(dp(20), dp(10), dp(20), dp(8));
         LinearLayout brand = row();
         LinearLayout identity = column();
@@ -2060,9 +2057,9 @@ public final class MainActivity extends Activity {
 
     private void resizeVideo() {
         if (root == null) return;
-        int width = root.getWidth() > 0 ? root.getWidth() : getResources().getDisplayMetrics().widthPixels;
-        int height = root.getHeight() > 0 ? root.getHeight() : getResources().getDisplayMetrics().heightPixels;
-        configureTabletLayout(width, height); root.requestLayout();
+        // The next measure owns the new window bounds. getWidth() can still describe the old
+        // split-screen window here; reconfiguring from it also creates a redundant layout cycle.
+        root.requestLayout();
     }
 
     /** Reparent only chrome; the player and its SurfaceView keep their identity while a window resizes. */
@@ -2838,6 +2835,8 @@ public final class MainActivity extends Activity {
             state.putBoolean("playbackPlaying", resumed ? player.getPlayWhenReady() : playWhenReadyBeforePause);
             state.putBoolean("playbackFullscreen", fullScreen); state.putFloat("playbackSpeed", player.getPlaybackParameters().speed);
             state.putFloat("playbackZoom", zoom); state.putFloat("playbackBrightness", playbackBrightness);
+            state.putInt("playbackResizeMode", playerView.getResizeMode());
+            state.putBoolean("playbackSkipDisabled", skipPolicy.isDisabledForSession());
             state.putInt("orientationBeforeFullscreen", orientationBeforeFullScreen);
             // Only a portable quality identity goes into saved state, never media URLs or account cookies.
             if (currentQuality != null) { state.putString("qualityId", currentQuality.id); state.putInt("qualityQn", currentQuality.qn); }
@@ -2876,6 +2875,9 @@ public final class MainActivity extends Activity {
             if (player == null) return;
             float speed = state.getFloat("playbackSpeed", 1f); if (speed >= .25f && speed <= 3f) player.setPlaybackSpeed(speed);
             zoom = Math.max(.5f, Math.min(3f, state.getFloat("playbackZoom", 1f))); applyZoom();
+            playerView.setResizeMode(state.getInt("playbackResizeMode", AspectRatioFrameLayout.RESIZE_MODE_FIT) == AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                ? AspectRatioFrameLayout.RESIZE_MODE_ZOOM : AspectRatioFrameLayout.RESIZE_MODE_FIT);
+            if (state.getBoolean("playbackSkipDisabled", false)) skipPolicy.disableForSession();
             playbackBrightness = state.getFloat("playbackBrightness", -1f); applyPlaybackBrightness();
             restoreTabletSelection(state);
             if (state.getBoolean("playbackFullscreen", false)) { setFullScreen(true); orientationBeforeFullScreen = state.getInt("orientationBeforeFullscreen", ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED); }

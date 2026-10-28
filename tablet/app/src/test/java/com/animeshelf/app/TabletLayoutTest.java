@@ -72,9 +72,20 @@ public class TabletLayoutTest {
         View root = layout(1280, 800);
         Map<String, ImageView> covers = (Map<String, ImageView>) field("libraryCovers");
         assertEquals(168, covers.get("tablet-0").getWidth());
-        View first = find(root, "番剧：tablet-1"), sixth = find(root, "番剧：tablet-6");
-        assertNotNull(first); assertNotNull(sixth); assertSame(first.getParent(), sixth.getParent());
-        assertTrue(first.getWidth() >= 170); assertTrue(first.getWidth() <= 230);
+        // Store sorts the catalogue; row geometry must not assume insertion order or series IDs.
+        ViewGroup results = (ViewGroup) field("libraryResults"), firstRow = null;
+        for (int i = 0; i < results.getChildCount() && firstRow == null; i++) {
+            View candidate = results.getChildAt(i);
+            if (!(candidate instanceof ViewGroup)) continue;
+            ViewGroup row = (ViewGroup) candidate;
+            if (row.getChildCount() > 0 && String.valueOf(row.getChildAt(0).getContentDescription()).startsWith("番剧：")) firstRow = row;
+        }
+        assertNotNull(firstRow); assertEquals(6, firstRow.getChildCount());
+        for (int i = 0; i < firstRow.getChildCount(); i++) {
+            View card = firstRow.getChildAt(i);
+            assertTrue(String.valueOf(card.getContentDescription()).startsWith("番剧："));
+            assertTrue(card.getWidth() >= 170); assertTrue(card.getWidth() <= 230);
+        }
         save(root, "tablet-home-1280.png");
     }
     @Test public void portraitAndNarrowSplitWindowKeepAnAccessibleSingleContentColumn() throws Exception {
@@ -117,8 +128,16 @@ public class TabletLayoutTest {
         ((DefaultDownloadIndex) repository.manager.getDownloadIndex()).putDownload(new Download(request, Download.STATE_COMPLETED, 1, 1, 100, 0, Download.FAILURE_REASON_NONE, progress));
     }
     private View layout(int width, int height) throws Exception {
+        android.content.res.Resources resources = activity.getResources();
+        android.content.res.Configuration previous = new android.content.res.Configuration(resources.getConfiguration());
+        org.robolectric.RuntimeEnvironment.setQualifiers("w" + width + "dp-h" + height + "dp-" + (width >= height ? "land" : "port") + "-mdpi");
+        android.content.res.Configuration resized = new android.content.res.Configuration(resources.getConfiguration());
+        controller.configurationChange(resized, resources.getDisplayMetrics(), previous.diff(resized));
+        assertSame("Handled window changes must retain the activity", activity, controller.get());
         View root = (View) field("root");
         for (int i = 0; i < 4; i++) { root.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)); root.layout(0, 0, width, height); idle(); }
+        assertEquals("The real window must agree with the measured fixture", width, root.getWidth());
+        assertEquals(height, root.getHeight());
         Map<String, ImageView> covers = (Map<String, ImageView>) field("libraryCovers"); int index = 0;
         for (ImageView image : covers.values()) { Bitmap b = Bitmap.createBitmap(160, 240, Bitmap.Config.ARGB_8888); Canvas canvas = new Canvas(b); canvas.drawColor(new int[]{0xFF47738C,0xFF6F527E,0xFF827145}[index++ % 3]); Paint p = new Paint(); p.setColor(0xFFB4C7DE); canvas.drawCircle(80, 80, 42, p); p.setColor(Color.WHITE); p.setTextSize(14); canvas.drawText("LOCAL FIXTURE", 24, 218, p); image.setImageBitmap(b); }
         return root;
