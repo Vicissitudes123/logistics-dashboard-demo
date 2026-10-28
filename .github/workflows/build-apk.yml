@@ -8,6 +8,10 @@ on:
     paths-ignore:
       - 'downloads/**'
       - '.github/workflows/deliver-apk.yml'
+      - 'tablet/**'
+      - 'desktop/**'
+      - '.github/workflows/build-tablet.yml'
+      - '.github/workflows/build-desktop.yml'
 
 permissions:
   contents: read

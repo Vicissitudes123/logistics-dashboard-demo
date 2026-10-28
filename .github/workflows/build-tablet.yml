@@ -1,0 +1,282 @@
+name: Build tablet APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - anime-shelf-apk
+    paths:
+      - 'tablet/**'
+      - '.github/workflows/build-tablet.yml'
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED_APK_VERSION: '0.1.13.1'
+  EXPECTED_APK_VERSION_CODE: '15'
+  EXPECTED_APK_CERTIFICATE_SHA256: '0c1ce08f08273587d4930f96e524e2f192dbbe80f46c4cc36f4d599f4605ed6c'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      apk_sha256: ${{ steps.apk_metadata.outputs.sha256 }}
+      apk_size: ${{ steps.apk_metadata.outputs.size }}
+      apk_version: ${{ steps.apk_metadata.outputs.version }}
+      apk_version_code: ${{ steps.apk_metadata.outputs.version_code }}
+      apk_certificate_sha256: ${{ steps.apk_metadata.outputs.certificate_sha256 }}
+    env:
+      ANIME_DEBUG_KEYSTORE: ${{ github.workspace }}/.ci-signing/debug.keystore
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Preserve test APK signing identity
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANIME_DEBUG_KEYSTORE }}
+          key: anime-shelf-debug-signing-v2
+      - name: Create test signing key when absent
+        shell: bash
+        run: |
+          if [ ! -s "$ANIME_DEBUG_KEYSTORE" ]; then
+            mkdir -p "$(dirname "$ANIME_DEBUG_KEYSTORE")"
+            keytool -genkeypair -keystore "$ANIME_DEBUG_KEYSTORE" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -noprompt
+          fi
+      - name: Install Android build tools
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Check media parser
+        run: |
+          mkdir -p build/parser-test
+          curl --fail --location --retry 3 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o build/parser-test/json.jar
+          javac --release 17 -cp build/parser-test/json.jar -d build/parser-test tablet/app/src/main/java/com/animeshelf/app/Models.java tablet/app/src/main/java/com/animeshelf/app/BiliClient.java tests/ParserSelfTest.java
+          java -cp build/parser-test:build/parser-test/json.jar com.animeshelf.app.ParserSelfTest
+      - name: Probe public media request behavior
+        continue-on-error: true
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p tablet/app/build/reports
+          python3 tests/probe_media_request.py 2>&1 | tee tablet/app/build/reports/network-probe.txt
+      - name: Test, build and lint
+        run: gradle -p tablet :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --no-daemon
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs tablet/app/build/outputs/apk/debug/app-debug.apk | tee tablet/app/build/outputs/apk/debug/apk-signature.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging tablet/app/build/outputs/apk/debug/app-debug.apk > tablet/app/build/outputs/apk/debug/apk-info.txt
+      - name: Record verified APK identity
+        id: apk_metadata
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re
+          folder = pathlib.Path('tablet/app/build/outputs/apk/debug')
+          apk = folder / 'app-debug.apk'
+          info = (folder / 'apk-info.txt').read_text()
+          signature = (folder / 'apk-signature.txt').read_text()
+          def required(pattern, text):
+              match = re.search(pattern, text)
+              if not match:
+                  raise SystemExit('Missing verified APK metadata: ' + pattern)
+              return match.group(1)
+          package = required(r"package: name='([^']+)'", info)
+          version = required(r"versionName='([^']+)'", info)
+          version_code = required(r"versionCode='([^']+)'", info)
+          certificate = required(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)', signature).lower()
+          signer_count = required(r'Number of signers: (\d+)', signature)
+          if (signer_count != '1' or package != 'com.animeshelf.app' or version != os.environ['EXPECTED_APK_VERSION']
+                  or version_code != os.environ['EXPECTED_APK_VERSION_CODE']
+                  or certificate != os.environ['EXPECTED_APK_CERTIFICATE_SHA256']):
+              raise SystemExit('APK package, version or signing certificate does not match the expected release')
+          values = {'sha256': hashlib.sha256(apk.read_bytes()).hexdigest(), 'size': str(apk.stat().st_size),
+                    'version': version, 'version_code': version_code, 'certificate_sha256': certificate}
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for key, value in values.items():
+                  output.write(f'{key}={value}\n')
+          print(values)
+          PY
+      - name: Upload APK and validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: anime-shelf-tablet-apk
+          path: |
+            tablet/app/build/outputs/apk/debug/*.apk
+            tablet/app/build/outputs/apk/debug/apk-info.txt
+            tablet/app/build/outputs/apk/debug/apk-signature.txt
+            tablet/app/build/reports/lint-results-debug.html
+            tablet/app/build/reports/network-probe.txt
+            tablet/app/build/reports/visuals/*.png
+            tablet/app/build/reports/tests/testDebugUnitTest/
+            tablet/app/build/test-results/testDebugUnitTest/*.xml
+          if-no-files-found: error
+
+  deliver:
+    name: Publish verified APK, installation ZIP and update manifest
+    needs: build
+    if: github.ref == 'refs/heads/anime-shelf-apk'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: anime-shelf-apk-delivery
+      cancel-in-progress: false
+    env:
+      BUILD_SOURCE_SHA: ${{ github.sha }}
+      BUILD_APK_SHA256: ${{ needs.build.outputs.apk_sha256 }}
+      BUILD_APK_SIZE: ${{ needs.build.outputs.apk_size }}
+      BUILD_APK_VERSION: ${{ needs.build.outputs.apk_version }}
+      BUILD_APK_VERSION_CODE: ${{ needs.build.outputs.apk_version_code }}
+      BUILD_APK_CERTIFICATE_SHA256: ${{ needs.build.outputs.apk_certificate_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: anime-shelf-apk
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: anime-shelf-tablet-apk
+          path: verified-build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: false
+      - name: Install APK verification tools
+        run: sdkmanager 'build-tools;35.0.0'
+      - name: Verify downloaded APK and write public download files
+        id: delivery_files
+        shell: bash
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs verified-build/outputs/apk/debug/app-debug.apk > verified-build/apk-signature-checked.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging verified-build/outputs/apk/debug/app-debug.apk > verified-build/apk-info-checked.txt
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, zipfile
+          folder = pathlib.Path('verified-build')
+          apk = folder / 'outputs/apk/debug/app-debug.apk'
+          payload = apk.read_bytes()
+          digest = hashlib.sha256(payload).hexdigest()
+          size = str(len(payload))
+          if digest != os.environ['BUILD_APK_SHA256'] or size != os.environ['BUILD_APK_SIZE']:
+              raise SystemExit('Downloaded APK bytes do not match the build job output')
+          info = (folder / 'apk-info-checked.txt').read_text()
+          signature = (folder / 'apk-signature-checked.txt').read_text()
+          def required(pattern, text):
+              match = re.search(pattern, text)
+              if not match:
+                  raise SystemExit('Missing verified APK metadata: ' + pattern)
+              return match.group(1)
+          package = required(r"package: name='([^']+)'", info)
+          version = required(r"versionName='([^']+)'", info)
+          code = required(r"versionCode='([^']+)'", info)
+          min_sdk = int(required(r"sdkVersion:'(\d+)'", info))
+          certificate = required(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)', signature).lower()
+          signer_count = required(r'Number of signers: (\d+)', signature)
+          if (signer_count != '1' or package != 'com.animeshelf.app'
+                  or version != os.environ['EXPECTED_APK_VERSION'] or version != os.environ['BUILD_APK_VERSION']
+                  or code != os.environ['EXPECTED_APK_VERSION_CODE'] or code != os.environ['BUILD_APK_VERSION_CODE']
+                  or certificate != os.environ['EXPECTED_APK_CERTIFICATE_SHA256']
+                  or certificate != os.environ['BUILD_APK_CERTIFICATE_SHA256']):
+              raise SystemExit('Downloaded APK identity or certificate does not match the verified build')
+          source_commit = os.environ['BUILD_SOURCE_SHA']
+          if not re.fullmatch(r'[0-9a-f]{40}', source_commit) or not 26 <= min_sdk <= 1000:
+              raise SystemExit('Invalid source commit or minimum Android SDK')
+          target = pathlib.Path('downloads/tablet') / f'anime-shelf-{version}.apk'
+          target.parent.mkdir(parents=True, exist_ok=True)
+          target.write_bytes(payload)
+          if target.stat().st_size != len(payload) or hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+              raise SystemExit('Public APK bytes do not match the verified build')
+          target.with_suffix('.apk.sha256').write_text(f'{digest}  {target.name}\n')
+          archive_target = target.with_name(f'anime-shelf-{version}-install.zip')
+          entry = zipfile.ZipInfo(target.name, date_time=(1980, 1, 1, 0, 0, 0))
+          # Store the already compressed APK unchanged, with reproducible metadata.
+          entry.compress_type = zipfile.ZIP_STORED
+          entry.create_system = 3
+          entry.external_attr = 0o100644 << 16
+          with zipfile.ZipFile(archive_target, 'w') as archive:
+              archive.writestr(entry, payload)
+          with zipfile.ZipFile(archive_target) as archive:
+              if archive.namelist() != [target.name] or archive.testzip() is not None:
+                  raise SystemExit('Installation ZIP has unexpected entries or a CRC failure')
+              contained_apk = archive.read(target.name)
+              if len(contained_apk) != len(payload) or hashlib.sha256(contained_apk).hexdigest() != digest:
+                  raise SystemExit('APK bytes changed inside the installation ZIP')
+          archive_digest = hashlib.sha256(archive_target.read_bytes()).hexdigest()
+          archive_target.with_suffix('.zip.sha256').write_text(f'{archive_digest}  {archive_target.name}\n')
+          base_url = 'https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/tablet/'
+          manifest = {
+              'schemaVersion': 1,
+              'versionCode': int(code),
+              'versionName': version,
+              'packageName': package,
+              'minSdk': min_sdk,
+              'apkUrl': base_url + target.name,
+              'zipUrl': base_url + archive_target.name,
+              'apkSha256': digest,
+              'zipSha256': archive_digest,
+              'apkBytes': len(payload),
+              'zipBytes': archive_target.stat().st_size,
+              'notes': [
+                  '面向支持安卓 APK 的华为平板，按当前窗口宽度调整大屏布局。',
+                  '宽屏侧边导航、播放器与剧集双栏，窄分屏自动恢复紧凑布局。',
+                  '保留手机版 0.1.13 的播放、离线下载、批量管理和续播功能。',
+                  '使用独立平板更新通道，登录和观看记录仍保存在本机。',
+              ],
+              'sourceCommit': source_commit,
+          }
+          manifest_path = target.parent / 'latest.json'
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          if json.loads(manifest_path.read_text(encoding='utf-8')) != manifest:
+              raise SystemExit('Written update manifest does not match verified release data')
+          manifest_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'zip_sha256={archive_digest}\n')
+              output.write(f'zip_size={archive_target.stat().st_size}\n')
+              output.write(f'manifest_sha256={manifest_digest}\n')
+          print(f'Verified {target}: {size} bytes, SHA-256 {digest}, certificate {certificate}')
+          print(f'Verified {archive_target}: {archive_target.stat().st_size} bytes, SHA-256 {archive_digest}')
+          print(f'Verified {manifest_path}: schema 1, version {version}, source {source_commit}, SHA-256 {manifest_digest}')
+          PY
+      - name: Commit only the verified APK, ZIP, checksums and update manifest
+        shell: bash
+        run: |
+          git merge-base --is-ancestor "$BUILD_SOURCE_SHA" HEAD
+          git diff --exit-code "$BUILD_SOURCE_SHA" HEAD -- tablet .github/workflows/build-tablet.yml
+          git add -- "downloads/tablet/anime-shelf-${BUILD_APK_VERSION}.apk" "downloads/tablet/anime-shelf-${BUILD_APK_VERSION}.apk.sha256" "downloads/tablet/anime-shelf-${BUILD_APK_VERSION}-install.zip" "downloads/tablet/anime-shelf-${BUILD_APK_VERSION}-install.zip.sha256" downloads/tablet/latest.json
+          if git diff --cached --quiet; then
+            echo 'The verified APK, ZIP and update manifest are already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "Publish verified Anime Shelf tablet ${BUILD_APK_VERSION} APK, ZIP and update manifest [skip ci]"
+          git push origin HEAD:anime-shelf-apk
+      - name: Report APK, ZIP and update manifest downloads
+        shell: bash
+        env:
+          ZIP_SHA256: ${{ steps.delivery_files.outputs.zip_sha256 }}
+          MANIFEST_SHA256: ${{ steps.delivery_files.outputs.manifest_sha256 }}
+        run: |
+          echo "ZIP: https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/tablet/anime-shelf-${BUILD_APK_VERSION}-install.zip" >> "$GITHUB_STEP_SUMMARY"
+          echo "ZIP SHA-256: $ZIP_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK: https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/tablet/anime-shelf-${BUILD_APK_VERSION}.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo "APK SHA-256: $BUILD_APK_SHA256" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Update manifest: https://raw.githubusercontent.com/Vicissitudes123/logistics-dashboard-demo/anime-shelf-apk/downloads/tablet/latest.json' >> "$GITHUB_STEP_SUMMARY"
+          echo "Update manifest SHA-256: $MANIFEST_SHA256" >> "$GITHUB_STEP_SUMMARY"
